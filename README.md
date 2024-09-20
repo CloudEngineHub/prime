@@ -8,7 +8,7 @@ install uv
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
+uv sync --extra all
 ```
 
 run your code using 

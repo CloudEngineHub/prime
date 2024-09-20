@@ -1,0 +1,10 @@
+name_model = "debugmodel"
+project = "debug"
+
+[train]
+micro_bs = 8
+
+[optim]
+batch_size = 64
+warmup_steps = 10
+total_steps = 5000

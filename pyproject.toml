@@ -10,9 +10,14 @@ dependencies = [
     "setuptools",
     "transformers>=4.44.2",
     "datasets>=3.0.0",
-    "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@v0.2"
+    "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@48aa6b9",
+    "einops"
 ]
 
+[project.optional-dependencies]
+all = [
+    "wandb",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -24,6 +24,11 @@ from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import llama2_configs, llama3_configs, Transformer
 
 
+### TODO
+
+# use torch.idst.local rank instead of env var
+# fix logger
+
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 
 if local_rank == 0:
@@ -155,7 +160,10 @@ def train(config: Config):
 
     logger.info("starting training")
     while True:
-        logger.info(f"outer_step step: {outer_step}")
+
+        if num_inner_steps > 1:
+            # if we don't use diloco we don't print the outer step logs
+            logger.info(f"outer_step step: {outer_step}")
 
         for inner_step in range(num_inner_steps):
             loss_batch = 0

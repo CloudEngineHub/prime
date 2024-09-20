@@ -976,7 +976,7 @@ wheels = [
 [[package]]
 name = "pydantic-config"
 version = "0.2.0"
-source = { git = "https://github.com/samsja/pydantic_config.git?rev=48aa6b9#48aa6b9d2bc6aa0e4d72a919d07e808802e558de" }
+source = { git = "https://github.com/samsja/pydantic_config.git?rev=e529c9c#e529c9ca7f3bd5581e2e8bab013faa6d2996810a" }
 dependencies = [
     { name = "pydantic" },
     { name = "rich" },
@@ -1817,7 +1817,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=3.0.0" },
     { name = "einops" },
     { name = "numpy" },
-    { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=48aa6b9" },
+    { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=e529c9c" },
     { name = "setuptools" },
     { name = "torch", specifier = "==2.4.1" },
     { name = "transformers", specifier = ">=4.44.2" },

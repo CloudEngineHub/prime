@@ -5,8 +5,12 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
 
+from datasets import load_dataset
+from datasets.distributed import split_dataset_by_node
 
 TEST_VOCAB_SIZE = 1024
+
+# TODO sami: make sure the init of the model is the same on all rank
 
 
 class FakeTokenizedDataset(IterableDataset):
@@ -57,14 +61,23 @@ def _collate_fn_causal_mask(
 
 
 def get_dataloader(
-    pad_token_id: int, world_size: int, rank: int, seq_length: int, batch_size: int, num_workers: int
+    tokenizer, world_size: int, rank: int, seq_length: int, batch_size: int, num_workers: int, fake_data: bool
 ) -> DataLoader:
-    """
-    Get a pytorch dataloader to train on
-    """
-    # todo add real dataset and world splitting
-    train_dataset = FakeTokenizedDataset(seq_length, TEST_VOCAB_SIZE)
-    data_collator = collate_causal_mask(max_seq_length=seq_length, pad_id=pad_token_id, ignore_index=-100)
+    if fake_data:
+        train_dataset = FakeTokenizedDataset(seq_length, TEST_VOCAB_SIZE)
+    else:
+        ds = load_dataset("allenai/c4", "en", streaming=True)
+
+        def tokenize_function(data):
+            outputs = tokenizer(data["text"], truncation=True, max_length=seq_length, padding="max_length")
+            return outputs
+
+        tokenized_datasets = ds.map(
+            tokenize_function, batched=True, remove_columns=["text", "timestamp", "url", "attention_mask"]
+        )["train"]
+        train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
+
+    data_collator = collate_causal_mask(max_seq_length=seq_length, pad_id=tokenizer.pad_token_id, ignore_index=-100)
 
     return DataLoader(
         train_dataset,

@@ -38,7 +38,6 @@ class DilocoConfig(BaseConfig):
 
 
 class DataConfig(BaseConfig):
-    dataset_name_or_path: str = "allenai/c4"
     seq_length: int = 1024
     fake_data: bool = False
     num_workers: int = 4
@@ -90,13 +89,15 @@ def train(config: Config):
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
 
     logger.debug("tokenizer loaded")
+
     train_dataloader = get_dataloader(
-        tokenizer.pad_token_id,
-        world_info.world_size,
-        world_info.rank,
-        config.data.seq_length,
-        config.train.micro_bs,
-        config.data.num_workers,
+        tokenizer=tokenizer,
+        world_size=world_info.world_size,
+        rank=world_info.rank,
+        seq_length=config.data.seq_length,
+        batch_size=config.train.micro_bs,
+        num_workers=config.data.num_workers,
+        fake_data=config.data.fake_data,
     )
 
     model = get_model(

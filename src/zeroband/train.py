@@ -24,8 +24,10 @@ from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 
 
-# Function to initialize the distributed process group
 def ddp_setup():
+    """
+    Initialize the distributed process group.
+    """
     init_process_group()
     torch.cuda.set_device(world_info.local_rank)
 
@@ -112,7 +114,7 @@ def train(config: Config):
         inner_optimizer,
         num_warmup_steps=config.optim.warmup_steps,
         num_training_steps=config.optim.total_steps,
-    )
+    ) 
 
     model.train()
 

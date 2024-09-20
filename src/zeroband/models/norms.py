@@ -1,4 +1,4 @@
-# this code is copy pasted from the torchtitan repo https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/norms.py 
+# this code is copy pasted from the torchtitan repo https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/norms.py
 # the commit at time of copy paste was commit f2a1551
 
 # Copyright (c) Meta Platforms, Inc. and affiliates.

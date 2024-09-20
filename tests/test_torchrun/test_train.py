@@ -15,17 +15,14 @@ def random_available_port():
     return get_random_available_port()
 
 
-
 @pytest.fixture()
 def config_path() -> str:
     # need to be executed in the root dir
-    return "configs/debug.toml" 
-
+    return "configs/debug.toml"
 
 
 @pytest.mark.parametrize("num_gpu", [1, 2])
 def test_multi_gpu_ckpt(config_path, random_available_port, num_gpu):
-
     cmd = [
         "torchrun",
         f"--nproc_per_node={num_gpu}",
@@ -34,7 +31,7 @@ def test_multi_gpu_ckpt(config_path, random_available_port, num_gpu):
         "src/zeroband/train.py",
         f"@{config_path}",
         "--optim.total_steps",
-        "10"
+        "10",
     ]
 
     result = subprocess.run(cmd)

@@ -1,4 +1,3 @@
-
 from functools import partial
 from typing import Any, Generator
 
@@ -32,7 +31,7 @@ def collate_causal_mask(max_seq_length: int = -1, pad_id: int = 0, ignore_index:
 def _collate_fn_causal_mask(
     samples: list[dict[str, torch.LongTensor]], max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100
 ) -> dict[str, torch.LongTensor]:
-    """collate function for causal mask. Fill with padding tokens if sequence is shorter than max_seq_length. 
+    """collate function for causal mask. Fill with padding tokens if sequence is shorter than max_seq_length.
     input_ids and labels are both of size max_seq_length.
     """
 
@@ -57,11 +56,13 @@ def _collate_fn_causal_mask(
     return {"input_ids": torch.stack(batched["input_ids"], dim=0), "labels": torch.stack(batched["labels"], dim=0)}
 
 
-def get_dataloader(pad_token_id: int, world_size: int, rank: int, seq_length: int, batch_size: int, num_workers: int) -> DataLoader:
+def get_dataloader(
+    pad_token_id: int, world_size: int, rank: int, seq_length: int, batch_size: int, num_workers: int
+) -> DataLoader:
     """
     Get a pytorch dataloader to train on
     """
-    #todo add real dataset and world splitting
+    # todo add real dataset and world splitting
     train_dataset = FakeTokenizedDataset(seq_length, TEST_VOCAB_SIZE)
     data_collator = collate_causal_mask(max_seq_length=seq_length, pad_id=pad_token_id, ignore_index=-100)
 
@@ -71,4 +72,3 @@ def get_dataloader(pad_token_id: int, world_size: int, rank: int, seq_length: in
         batch_size=batch_size,
         num_workers=num_workers,
     )
-

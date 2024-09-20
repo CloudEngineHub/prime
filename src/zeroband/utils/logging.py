@@ -5,6 +5,7 @@ from zeroband.utils.world_info import get_world_info
 
 logger = None
 
+
 class CustomFormatter(logging.Formatter):
     def __init__(self, local_rank: int):
         super().__init__()
@@ -12,9 +13,10 @@ class CustomFormatter(logging.Formatter):
 
     def format(self, record):
         log_format = "{asctime} [{levelname}] [Rank {local_rank}] {message}"
-        formatter = logging.Formatter(log_format, style='{', datefmt="%H:%M:%S")
+        formatter = logging.Formatter(log_format, style="{", datefmt="%H:%M:%S")
         record.local_rank = self.local_rank  # Add this line to set the local rank in the record
         return formatter.format(record)
+
 
 def get_logger():
     global logger  # Add this line to modify the global logger variable
@@ -36,4 +38,3 @@ def get_logger():
     logger.propagate = False  # Prevent the log messages from being propagated to the root logger
 
     return logger
-

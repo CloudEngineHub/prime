@@ -31,6 +31,7 @@ def ddp_setup():
     init_process_group()
     torch.cuda.set_device(world_info.local_rank)
 
+
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int = 10
@@ -42,6 +43,7 @@ class DataConfig(BaseConfig):
     fake_data: bool = False
     num_workers: int = 4
 
+
 class OptimConfig(BaseConfig):
     lr: float = 4e-4
     weight_decay: float = 0.1
@@ -52,6 +54,7 @@ class OptimConfig(BaseConfig):
     total_steps: int = 88_000
     batch_size: int = 512
 
+
 class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
@@ -59,21 +62,18 @@ class TrainConfig(BaseConfig):
 
 
 class Config(BaseConfig):
-
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
-    type_model: Literal["llama2","llama3"] = "llama2"
+    type_model: Literal["llama2", "llama3"] = "llama2"
 
     project: str = "zeroband"
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
-    
 
     # sub config
     diloco: DilocoConfig | None = None
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
-    
 
 
 def train(config: Config):
@@ -90,9 +90,20 @@ def train(config: Config):
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
 
     logger.debug("tokenizer loaded")
-    train_dataloader = get_dataloader(tokenizer.pad_token_id, world_info.world_size, world_info.rank, config.data.seq_length, config.train.micro_bs, config.data.num_workers)
+    train_dataloader = get_dataloader(
+        tokenizer.pad_token_id,
+        world_info.world_size,
+        world_info.rank,
+        config.data.seq_length,
+        config.train.micro_bs,
+        config.data.num_workers,
+    )
 
-    model = get_model(config.name_model, config.type_model, vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE)
+    model = get_model(
+        config.name_model,
+        config.type_model,
+        vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE,
+    )
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
@@ -108,13 +119,18 @@ def train(config: Config):
     logger.debug("model compiled and fsdped")
 
     # Setup optimizers
-    inner_optimizer = torch.optim.AdamW(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay, betas=(config.optim.adam_betas1, config.optim.adam_betas2))
+    inner_optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.optim.lr,
+        weight_decay=config.optim.weight_decay,
+        betas=(config.optim.adam_betas1, config.optim.adam_betas2),
+    )
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,
         num_warmup_steps=config.optim.warmup_steps,
         num_training_steps=config.optim.total_steps,
-    ) 
+    )
 
     model.train()
 
@@ -129,7 +145,6 @@ def train(config: Config):
 
     logger.info("starting training")
     while True:
-
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {outer_step}")
@@ -144,11 +159,13 @@ def train(config: Config):
                 labels = batch["labels"].to("cuda")
 
                 with model.no_sync() if is_accumulating else nullcontext():
-                    logits = model(tokens = input_ids).contiguous()
+                    logits = model(tokens=input_ids).contiguous()
                     flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
                     flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                    loss = F.cross_entropy(flatten_logits, flatten_labels, ignore_index=-100) / gradient_accumulation_steps
+                    loss = (
+                        F.cross_entropy(flatten_logits, flatten_labels, ignore_index=-100) / gradient_accumulation_steps
+                    )
                     loss.backward()
                     loss_batch += loss.detach()
 
@@ -158,12 +175,12 @@ def train(config: Config):
             inner_optimizer.zero_grad()
 
             # logging
-            real_step = outer_step * num_inner_steps + inner_step + 1 # add + 1 because inner_step start at 0
+            real_step = outer_step * num_inner_steps + inner_step + 1  # add + 1 because inner_step start at 0
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
             metrics = {
-                "Loss": loss_batch.item(), # todo(sami): do local all reduce for the loss
-                "step": real_step, 
+                "Loss": loss_batch.item(),  # todo(sami): do local all reduce for the loss
+                "step": real_step,
                 "inner_lr": inner_lr,
             }
 
@@ -189,10 +206,10 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
-    
+
     world_info = get_world_info()
     logger = get_logger()
-    
+
     ddp_setup()
 
     config = Config(**parse_argv())

@@ -13,7 +13,7 @@ __all__ = ["Transformer"]
 
 llama2_configs = {
     "debugmodel": ModelArgs(dim=256, n_layers=2, n_heads=8),
-    "150M": ModelArgs(dim=1024, n_layers=12, n_heads=16), # todo(sami): double check this
+    "150M": ModelArgs(dim=1024, n_layers=12, n_heads=16),  # todo(sami): double check this
     "271M": ModelArgs(dim=1024, n_layers=16, n_heads=8),
     "1B": ModelArgs(dim=2048, n_layers=18, n_heads=16),
     "7B": ModelArgs(dim=4096, n_layers=32, n_heads=32),
@@ -60,6 +60,7 @@ llama3_configs = {
     ),
 }
 
+
 def get_model(name_model: str, type_model: str, vocab_size: int) -> Transformer:
     """get the transformer model"""
 
@@ -69,7 +70,6 @@ def get_model(name_model: str, type_model: str, vocab_size: int) -> Transformer:
         config = llama3_configs[name_model]
     else:
         raise ValueError(f"Model type {type_model} not supported")
-    
+
     config.vocab_size = vocab_size
     return Transformer(config)
-

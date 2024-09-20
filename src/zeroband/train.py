@@ -1,6 +1,5 @@
 import os
 from contextlib import nullcontext
-import datetime
 import logging  # Added logging import
 from typing import Literal
 
@@ -22,16 +21,15 @@ from zeroband.utils import get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import llama2_configs, llama3_configs, Transformer
+from zeroband.utils.world_info import WorldInfo
 
 
 ### TODO
-
-# use torch.idst.local rank instead of env var
 # fix logger
 
-local_rank = int(os.getenv("LOCAL_RANK", 0))
+world_info = WorldInfo()
 
-if local_rank == 0:
+if world_info.local_rank == 0:
     log_level = os.getenv("ZERO_BAND_LOG_LEVEL", "INFO")
     logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
 else:
@@ -42,8 +40,7 @@ logger = logging.getLogger(__name__)
 # Function to initialize the distributed process group
 def ddp_setup():
     init_process_group()
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-
+    torch.cuda.set_device(world_info.local_rank)
 
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
@@ -105,14 +102,10 @@ def get_model(name_model: str, type_model: str, tokenizer: AutoTokenizer) -> Tra
 
 def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
-    local_rank = int(os.environ["LOCAL_RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-    local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
-    rank = int(os.environ["RANK"])
 
     # batch_size is the total batch size for all GPUs
-    assert config.optim.batch_size % local_world_size == 0
-    batch_size = config.optim.batch_size // local_world_size
+    assert config.optim.batch_size % world_info.local_world_size == 0
+    batch_size = config.optim.batch_size // world_info.local_world_size
 
     assert batch_size % config.train.micro_bs == 0
     gradient_accumulation_steps = batch_size // config.train.micro_bs
@@ -121,10 +114,10 @@ def train(config: Config):
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
 
     logger.debug("tokenizer loaded")
-    train_dataloader = get_dataloader(tokenizer.pad_token_id, world_size, rank, config.data.seq_length, config.train.micro_bs, config.data.num_workers)
+    train_dataloader = get_dataloader(tokenizer.pad_token_id, world_info.world_size, world_info.rank, config.data.seq_length, config.train.micro_bs, config.data.num_workers)
 
     model = get_model(config.name_model, config.type_model, tokenizer=tokenizer)
-    model = model.to(local_rank)
+    model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
     model = FSDP(
@@ -149,7 +142,7 @@ def train(config: Config):
 
     model.train()
 
-    if rank == 0:
+    if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
         metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
 
@@ -198,7 +191,7 @@ def train(config: Config):
                 "inner_lr": inner_lr,
             }
 
-            if rank == 0:
+            if world_info.rank == 0:
                 metric_logger.log(metrics)
 
             logger.info(f"step: {real_step}, loss: {loss_batch.item()}, inner_lr: {inner_lr}")
@@ -211,7 +204,7 @@ def train(config: Config):
             # Since ckpt strategy and all reduce is done at the outer loop level.
             break
 
-    if rank == 0:
+    if world_info.rank == 0:
         metric_logger.finish()
 
 

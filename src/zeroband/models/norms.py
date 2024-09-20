@@ -248,7 +248,7 @@ class TritonFusedRMSNorm(torch.autograd.Function):
         if N > block_N:
             raise ValueError(f"N {N} must be <= {block_N=}")
 
-        grid = lambda meta: (M,)
+        grid = lambda meta: (M,)  # noqa: E731
         _rms_norm_fwd_kernel[grid](
             x,
             x.stride(0),
@@ -298,7 +298,7 @@ class TritonFusedRMSNorm(torch.autograd.Function):
         if N > block_N:
             raise ValueError(f"N {N} must be <= {block_N=}")
 
-        grid = lambda meta: (sm_count,)
+        grid = lambda meta: (sm_count,)  # noqa: E731
         _rms_norm_bwd_kernel_sm[grid](
             x,
             x.stride(0),

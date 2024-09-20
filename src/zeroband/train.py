@@ -55,7 +55,7 @@ class OptimConfig(BaseConfig):
 class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
-    sharding_strategy: str = "FULL_SHARD"
+    sharding_strategy: str = "SHARD_GRAD_OP"
 
 
 class Config(BaseConfig):

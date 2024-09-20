@@ -2,11 +2,8 @@ name_model = "150M"
 project = "debug_150m_zero_band"
 
 [train]
-micro_bs = 16 # change this base on the gpu
-
-# 16 for 3090/4090 (24gb)
-# 32 for a40/a100  (48gb/40gb)
-# 64 for h100/a100 (80gb)
+micro_bs = 64 # change this base on the gpu
+sharding_strategy = "NO_SHARD"
 
 [optim]
 batch_size = 512

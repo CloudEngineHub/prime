@@ -1,6 +1,5 @@
 import os
 from contextlib import nullcontext
-import logging  # Added logging import
 from typing import Literal
 
 import torch
@@ -20,22 +19,10 @@ from torch.distributed.fsdp import (
 from zeroband.utils import get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
-from zeroband.models.llama import llama2_configs, llama3_configs, Transformer
-from zeroband.utils.world_info import WorldInfo
+from zeroband.models.llama import get_model
+from zeroband.utils.world_info import get_world_info
+from zeroband.utils.logging import get_logger
 
-
-### TODO
-# fix logger
-
-world_info = WorldInfo()
-
-if world_info.local_rank == 0:
-    log_level = os.getenv("ZERO_BAND_LOG_LEVEL", "INFO")
-    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
-else:
-    logging.basicConfig(level=logging.CRITICAL)  # Disable logging for non-zero ranks
-
-logger = logging.getLogger(__name__)
 
 # Function to initialize the distributed process group
 def ddp_setup():
@@ -87,19 +74,6 @@ class Config(BaseConfig):
     
 
 
-def get_model(name_model: str, type_model: str, tokenizer: AutoTokenizer) -> Transformer:
-    """get the transformer model"""
-
-    if type_model == "llama2":
-        config = llama2_configs[name_model]
-    elif type_model == "llama3":
-        config = llama3_configs[name_model]
-    else:
-        raise ValueError(f"Model type {type_model} not supported")
-    
-    config.vocab_size = tokenizer.vocab_size if name_model != "debugmodel" else TEST_VOCAB_SIZE
-    return Transformer(config)
-
 def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
 
@@ -116,7 +90,7 @@ def train(config: Config):
     logger.debug("tokenizer loaded")
     train_dataloader = get_dataloader(tokenizer.pad_token_id, world_info.world_size, world_info.rank, config.data.seq_length, config.train.micro_bs, config.data.num_workers)
 
-    model = get_model(config.name_model, config.type_model, tokenizer=tokenizer)
+    model = get_model(config.name_model, config.type_model, vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE)
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
@@ -213,6 +187,10 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
+    
+    world_info = get_world_info()
+    logger = get_logger()
+    
     ddp_setup()
 
     config = Config(**parse_argv())

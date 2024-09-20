@@ -59,3 +59,17 @@ llama3_configs = {
         rope_theta=500000,
     ),
 }
+
+def get_model(name_model: str, type_model: str, vocab_size: int) -> Transformer:
+    """get the transformer model"""
+
+    if type_model == "llama2":
+        config = llama2_configs[name_model]
+    elif type_model == "llama3":
+        config = llama3_configs[name_model]
+    else:
+        raise ValueError(f"Model type {type_model} not supported")
+    
+    config.vocab_size = vocab_size
+    return Transformer(config)
+

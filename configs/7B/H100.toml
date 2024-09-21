@@ -1,12 +1,12 @@
-name_model = "1B"
-project = "debug_1B_zero_band"
+name_model = "7B"
+project = "debug_7B_zero_band"
 
 [train]
-micro_bs = 16  
+micro_bs = 6  
 sharding_strategy = "SHARD_GRAD_OP"
 
 [optim]
-batch_size = 512
+batch_size = 3840
 warmup_steps = 1000
 total_steps = 88_000
-lr = 4e-4
+lr = 6e-4

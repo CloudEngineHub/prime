@@ -8,3 +8,6 @@ micro_bs = 8
 batch_size = 16
 warmup_steps = 10
 total_steps = 5000
+
+[data]
+fake_data = true

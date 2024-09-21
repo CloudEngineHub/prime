@@ -3,6 +3,7 @@ project = "debug"
 
 [train]
 micro_bs = 8
+sharding_strategy = "FULL_SHARD"
 
 [optim]
 batch_size = 16
@@ -11,3 +12,6 @@ total_steps = 5000
 
 [data]
 fake_data = true
+
+[diloco]
+inner_steps = 10

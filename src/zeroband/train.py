@@ -19,6 +19,7 @@ from torch.distributed.fsdp import (
 )
 import torch.distributed as dist
 from zeroband import utils
+from zeroband.diloco import Diloco, DilocoConfig
 
 from zeroband.utils import get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
@@ -34,11 +35,6 @@ def ddp_setup():
     """
     init_process_group()
     torch.cuda.set_device(world_info.local_rank)
-
-
-class DilocoConfig(BaseConfig):
-    outer_lr: float = 0.7
-    inner_steps: int = 10
 
 
 class DataConfig(BaseConfig):
@@ -134,6 +130,9 @@ def train(config: Config):
         model = torch.compile(model)
     logger.debug("model compiled and fsdped")
 
+    if config.diloco is not None:
+        diloco = Diloco(config.diloco, model, sharding_strategy)
+
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -220,6 +219,11 @@ def train(config: Config):
             logger.info(
                 f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}"
             )
+
+        if config.diloco is not None:
+            diloco.sync_pseudo_gradient(model)
+            diloco.outer_optimizer.step()
+            diloco.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
         outer_step += 1
 

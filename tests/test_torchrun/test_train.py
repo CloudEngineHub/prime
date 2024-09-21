@@ -15,21 +15,34 @@ def random_available_port():
     return get_random_available_port()
 
 
-@pytest.fixture()
-def config_path() -> str:
-    # need to be executed in the root dir
-    return "configs/debug.toml"
-
-
 @pytest.mark.parametrize("num_gpu", [1, 2])
-def test_multi_gpu_ckpt(config_path, random_available_port, num_gpu):
+def test_multi_gpu(random_available_port, num_gpu):
     cmd = [
         "torchrun",
         f"--nproc_per_node={num_gpu}",
         "--rdzv-endpoint",
         f"localhost:{random_available_port}",
         "src/zeroband/train.py",
-        f"@{config_path}",
+        "@configs/debug/debug.toml",
+        "--optim.total_steps",
+        "10",
+    ]
+
+    result = subprocess.run(cmd)
+
+    if result.returncode != 0:
+        pytest.fail(f"Process {result} failed {result.stderr}")
+
+
+@pytest.mark.parametrize("num_gpu", [1, 2])
+def test_multi_gpu_diloco(random_available_port, num_gpu):
+    cmd = [
+        "torchrun",
+        f"--nproc_per_node={num_gpu}",
+        "--rdzv-endpoint",
+        f"localhost:{random_available_port}",
+        "src/zeroband/train.py",
+        "@configs/debug/diloco.toml",
         "--optim.total_steps",
         "10",
     ]

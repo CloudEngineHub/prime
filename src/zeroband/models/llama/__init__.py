@@ -61,7 +61,7 @@ llama3_configs = {
 }
 
 
-def get_model(name_model: str, type_model: str, vocab_size: int) -> Transformer:
+def get_model(name_model: str, type_model: str, vocab_size: int) -> tuple[Transformer, ModelArgs]:
     """get the transformer model"""
 
     if type_model == "llama2":
@@ -72,4 +72,4 @@ def get_model(name_model: str, type_model: str, vocab_size: int) -> Transformer:
         raise ValueError(f"Model type {type_model} not supported")
 
     config.vocab_size = vocab_size
-    return Transformer(config)
+    return Transformer(config), config

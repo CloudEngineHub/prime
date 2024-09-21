@@ -18,6 +18,7 @@ from torch.distributed.fsdp import (
     MixedPrecision,
 )
 import torch.distributed as dist
+from zeroband import utils
 
 from zeroband.utils import get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
@@ -103,13 +104,24 @@ def train(config: Config):
         fake_data=config.data.fake_data,
     )
 
-    model = get_model(
+    model, model_config = get_model(
         config.name_model,
         config.type_model,
         vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE,
     )
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
+
+    gpu_peak_flops = utils.get_peak_flops(torch.cuda.get_device_name(torch.device("cuda")))
+    logger.info(f"Peak FLOPS used for computing MFU: {gpu_peak_flops:.3e}")
+
+    num_params = utils.get_num_params(model, exclude_embedding=True)
+    logger.info(f"Number of parameters: {num_params}")
+    num_flop_per_token = utils.get_num_flop_per_token(
+        num_params,
+        model_config,
+        config.data.seq_length,
+    )
 
     model = FSDP(
         model,
@@ -187,22 +199,26 @@ def train(config: Config):
             # syncing loss across all data parallel rank
             # todo(sami): when using diloco make sure that the loss is computed only on local world
 
+            time_taken = time.time() - beginning_step_time
+            tokens_per_second = config.data.seq_length * config.optim.batch_size / time_taken
+
+            mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops
+
             metrics = {
                 "Loss": loss_batch.item(),
                 "step": real_step,
                 "inner_lr": inner_lr,
-                "tokens_per_second": config.data.seq_length
-                * config.optim.batch_size
-                / (time.time() - beginning_step_time),
+                "tokens_per_second": tokens_per_second,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": real_step * config.optim.batch_size * config.data.seq_length,
+                "mfu": mfu,
             }
 
             if world_info.rank == 0:
                 metric_logger.log(metrics)
 
             logger.info(
-                f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}"
+                f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}"
             )
 
         outer_step += 1

@@ -19,7 +19,7 @@ from torch.distributed.fsdp import (
 )
 import torch.distributed as dist
 from zeroband import utils
-from zeroband.diloco import Diloco, DilocoConfig
+from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
 
 from zeroband.utils import get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
@@ -119,11 +119,14 @@ def train(config: Config):
         config.data.seq_length,
     )
 
+    elastic_device_mesh = ElasticDeviceMesh()
+
     model = FSDP(
         model,
         sharding_strategy=sharding_strategy,
         mixed_precision=MixedPrecision(param_dtype=torch.bfloat16),
         use_orig_params=True,
+        process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
     )
 
     if config.train.torch_compile:
@@ -131,7 +134,7 @@ def train(config: Config):
     logger.debug("model compiled and fsdped")
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy)
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
@@ -221,9 +224,7 @@ def train(config: Config):
             )
 
         if config.diloco is not None:
-            diloco.sync_pseudo_gradient(model)
-            diloco.outer_optimizer.step()
-            diloco.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+            diloco.step(model)
 
         outer_step += 1
 

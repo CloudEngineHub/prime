@@ -29,14 +29,6 @@ from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 
 
-def ddp_setup():
-    """
-    Initialize the distributed process group.
-    """
-    init_process_group()
-    torch.cuda.set_device(world_info.local_rank)
-
-
 class DataConfig(BaseConfig):
     seq_length: int = 1024
     fake: bool = False
@@ -255,7 +247,8 @@ if __name__ == "__main__":
     world_info = get_world_info()
     logger = get_logger()
 
-    ddp_setup()
+    init_process_group()
+    torch.cuda.set_device(world_info.local_rank)
 
     config = Config(**parse_argv())
     logger.debug(f"config: {config.model_dump()}")

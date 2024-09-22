@@ -36,6 +36,31 @@ class ElasticDeviceMesh:
 
 
 class Diloco:
+    """
+    This class implements the diloco algorithm from  https://arxiv.org/abs/2311.08105 and https://arxiv.org/abs/2407.07852.
+
+    It handles the outer loop as well as the inter node communication.
+
+    There is no VRAM overhead with this implementation as the model is outer optimizer is offloaded to cpu.
+    All reduce communication are also done on cpu using GLOO.
+
+    Example usage:
+
+    # Example usage in a training loop:
+
+    diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+
+    for outer_step in range(num_outer_steps):
+        for inner_step in range(config.diloco.inner_steps):
+            # Regular inner training loop
+                optimizer.zero_grad()
+                loss = model(batch)
+                loss.backward()
+                optimizer.step()
+
+        diloco.step(model)
+    """
+
     def __init__(
         self,
         config: DilocoConfig,
@@ -123,12 +148,9 @@ class Diloco:
         """
         Step the optimizer
         """
-        # self.sync_pseudo_gradient(model)
-        # if self.outer_optimizer is not None:
-        #     self.outer_optimizer.step()
-        #     self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+        self.sync_pseudo_gradient(model)
+        if self.outer_optimizer is not None:
+            self.outer_optimizer.step()
+            self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
-        for param in model.parameters():
-            param.data = torch.zeros_like(param.data).to(param.data.device)
-
-        # self.sync_inner_model(model)
+        self.sync_inner_model(model)

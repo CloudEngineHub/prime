@@ -207,7 +207,7 @@ def train(config: Config):
             time_taken = time.time() - beginning_step_time
             tokens_per_second = config.data.seq_length * config.optim.batch_size / time_taken
 
-            mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops
+            mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
 
             metrics = {
                 "Loss": loss_batch.item(),

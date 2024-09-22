@@ -123,8 +123,12 @@ class Diloco:
         """
         Step the optimizer
         """
-        self.sync_pseudo_gradient(model)
-        if self.outer_optimizer is not None:
-            self.outer_optimizer.step()
-            self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
-        self.sync_inner_model(model)
+        # self.sync_pseudo_gradient(model)
+        # if self.outer_optimizer is not None:
+        #     self.outer_optimizer.step()
+        #     self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+
+        for param in model.parameters():
+            param.data = torch.zeros_like(param.data).to(param.data.device)
+
+        # self.sync_inner_model(model)

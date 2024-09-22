@@ -134,6 +134,9 @@ def train(config: Config):
     logger.debug("model compiled and fsdped")
 
     if config.diloco is not None:
+        if world_info.local_world_size == 1:
+            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
+
         diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     # Setup optimizers

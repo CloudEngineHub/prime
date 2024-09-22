@@ -60,5 +60,8 @@ do
     CUDA_VISIBLE_DEVICES=$(get_cuda_devices $NUM_GPU $i) uv run torchrun --nproc_per_node=$NUM_GPU --node-rank $i --rdzv-endpoint localhost:9999 --nnodes=$N  $@  > logs/log$i 2>&1 &
     child_pids+=($!)
 done
+
+tail -f logs/log0 &
+child_pids+=($!)
  
 wait

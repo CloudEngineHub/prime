@@ -8,7 +8,7 @@ sharding_strategy = "SHARD_GRAD_OP"
 [optim]
 batch_size = 16
 warmup_steps = 10
-total_steps = 5000
+total_steps = 10
 
 [data]
 fake_data = true

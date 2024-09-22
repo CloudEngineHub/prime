@@ -12,5 +12,5 @@ warmup_steps = 10
 total_steps = 10
 
 [data]
-fake_data = true
+fake = true
 

@@ -39,7 +39,7 @@ def ddp_setup():
 
 class DataConfig(BaseConfig):
     seq_length: int = 1024
-    fake_data: bool = False
+    fake: bool = False
     num_workers: int = 4
 
 
@@ -97,7 +97,7 @@ def train(config: Config):
         seq_length=config.data.seq_length,
         batch_size=config.train.micro_bs,
         num_workers=config.data.num_workers,
-        fake_data=config.data.fake_data,
+        fake_data=config.data.fake,
     )
 
     model, model_config = get_model(

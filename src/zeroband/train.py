@@ -219,12 +219,17 @@ def train(config: Config):
                 "mfu": mfu,
             }
 
+            if config.diloco is not None:
+                metrics["num_peers"] = elastic_device_mesh.global_pg.size()
+
             if world_info.rank == 0:
                 metric_logger.log(metrics)
 
-            logger.info(
-                f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}"
-            )
+            log = f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}"
+            if config.diloco is not None:
+                log += f", diloco_peers: {metrics['num_peers']}"
+
+            logger.info(log)
 
         if config.diloco is not None:
             diloco.step(model)

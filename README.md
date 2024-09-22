@@ -26,6 +26,14 @@ To check that everything is working you can do
 ZERO_BAND_LOG_LEVEL=DEBUG torchrun  --nproc_per_node=2 src/zeroband/train.py @configs/debug/debug.toml
 ```
 
+## run diloco
+
+To run diloco locally you can use the helper script `scripts/simulatsimulate_multi_nodee_mutl.sh`
+
+```bash
+ZERO_BAND_LOG_LEVEL=DEBUG ./scripts/simulate_multi_node.sh 2 2 src/zeroband/train.py @configs/debug/diloco.toml
+```
+
 ## run test
 
 You need a machine with a least two gpus to run the full test suite.

@@ -46,6 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_size", type=int, default=int(1e9), help="Model size for the test matrix.")
     parser.add_argument("--n_iters", type=int, default=2, help="Number of iterations to time.")
 
+    print("STORE PASSED ")
     init_process_group(backend="gloo")
 
     args = parser.parse_args()

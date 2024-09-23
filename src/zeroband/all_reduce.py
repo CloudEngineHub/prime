@@ -14,7 +14,6 @@ import argparse  # Import argparse for CLI arguments
 
 
 import torch.utils.benchmark as benchmark
-from torch.distributed.distributed_c10d import _get_default_store as get_default_store
 
 
 def main(model_size, n_iters):
@@ -47,8 +46,6 @@ if __name__ == "__main__":
     parser.add_argument("--model_size", type=int, default=int(1e9), help="Model size for the test matrix.")
     parser.add_argument("--n_iters", type=int, default=2, help="Number of iterations to time.")
 
-    store = get_default_store()
-    print(store.num_keys())
     init_process_group(backend="gloo")
 
     args = parser.parse_args()

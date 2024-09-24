@@ -69,7 +69,7 @@ def get_dataloader(
         ds = load_dataset("allenai/c4", "en", streaming=True)
 
         def tokenize_function(data):
-            outputs = tokenizer(data["text"], truncation=True, max_length=seq_length, padding="max_length")
+            outputs = tokenizer(data["text"], truncation=True, max_length=seq_length)
             return outputs
 
         tokenized_datasets = ds.map(

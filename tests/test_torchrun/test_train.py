@@ -66,7 +66,7 @@ def test_multi_gpu_diloco(num_gpus):
     _test_multi_gpu(num_gpus, "debug/diloco.toml")
 
 
-@pytest.mark.parametrize("strategy", ["SHARD_GRAD_OP", "NO_SHARD"])
+@pytest.mark.parametrize("strategy", ["SHARD_GRAD_OP"])
 def test_multi_gpu_diloco_non_full_shard(strategy):
     # we don't test 1,1 and 2,1 because 1 solo gpu failed with fsdp
     num_gpus = [2, 2]

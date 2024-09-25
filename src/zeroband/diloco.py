@@ -91,18 +91,17 @@ class Diloco:
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
-        if self.need_to_offload:
-            self._logger.debug("sync pseudo gradient")
-            for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-                # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
-                param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+        self._logger.debug("sync pseudo gradient")
+        for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+            # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
+            param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
-                # gloo does not support AVG
-                param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
-                dist.all_reduce(
-                    param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
-                )
-                # todo async here
+            # gloo does not support AVG
+            param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
+            dist.all_reduce(
+                param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
+            )
+            # todo async here
 
     def sync_inner_model(self, model: nn.Module):
         """

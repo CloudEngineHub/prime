@@ -9,11 +9,11 @@ sharding_strategy = "FULL_SHARD"
 [optim]
 batch_size = 16
 warmup_steps = 10
-total_steps = 10
+total_steps = 4
 
 [data]
 fake = true
 
 [diloco]
-inner_steps = 5
+inner_steps = 2
 

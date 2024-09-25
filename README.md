@@ -23,7 +23,7 @@ uv run ...
 To check that everything is working you can do
 
 ```bash
-ZERO_BAND_LOG_LEVEL=DEBUG torchrun  --nproc_per_node=2 src/zeroband/train.py @configs/debug/debug.toml
+ZERO_BAND_LOG_LEVEL=DEBUG torchrun  --nproc_per_node=2 src/zeroband/train.py @configs/debug/normal.toml
 ```
 
 ## run diloco

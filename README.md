@@ -9,8 +9,30 @@ install uv
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.cargo/env
+```
+
+Optionnaly create a venv
+
+```
+uv venv
+source .venv/bin/activate
+```
+
+Install deps
+```
 uv sync --extra all
 ```
+
+
+copy paste to full command:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.cargo/env
+uv venv
+source .venv/bin/activate
+uv sync --extra all
+```
+
 
 run your code using 
 

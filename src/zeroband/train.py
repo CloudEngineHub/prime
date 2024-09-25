@@ -172,9 +172,6 @@ def train(config: Config):
                 input_ids = batch["input_ids"].to("cuda")
                 labels = batch["labels"].to("cuda")
 
-                logger.debug(f"input_ids: {input_ids[0][0:10]}")
-                logger.debug(f"labels:    {labels[0][0:10]}")
-
                 with model.no_sync() if is_accumulating else nullcontext():
                     logits = model(tokens=input_ids).contiguous()
                     flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")

@@ -4,7 +4,6 @@ from typing import Literal
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
-from torch.distributed import destroy_process_group, init_process_group
 from einops import rearrange
 from torch.nn import functional as F
 
@@ -18,7 +17,8 @@ from torch.distributed.fsdp import (
 )
 import torch.distributed as dist
 from zeroband import utils
-from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
+from zeroband.diloco import Diloco, DilocoConfig
+from zeroband.comms import ElasticDeviceMesh
 
 from zeroband.utils import PerfCounter, get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
@@ -248,11 +248,9 @@ if __name__ == "__main__":
     world_info = get_world_info()
     logger = get_logger()
 
-    init_process_group()
     torch.cuda.set_device(world_info.local_rank)
 
     config = Config(**parse_argv())
     logger.debug(f"config: {config.model_dump()}")
 
     train(config)
-    destroy_process_group()

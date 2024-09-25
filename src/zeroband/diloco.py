@@ -1,9 +1,9 @@
 from pydantic_config import BaseConfig
 import torch
-from torch.distributed.device_mesh import init_device_mesh
 from torch import nn
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
+from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
 
@@ -11,29 +11,6 @@ import torch.distributed as dist
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
-
-
-class ElasticDeviceMesh:
-    """Init two process group through device mesh, one local on gpu and one global on cpu"""
-
-    def __init__(self):
-        self._logger = get_logger()
-
-        self.world_info = get_world_info()
-
-        # right now device mesh does not support two backend so we just create two identicaly mesh expect the backend
-        self.device_mesh = init_device_mesh(
-            "cuda", (self.world_info.nnodes, self.world_info.local_world_size), mesh_dim_names=("global", "local")
-        )
-        self.device_mesh_cpu = init_device_mesh(
-            "gloo", (self.world_info.nnodes, self.world_info.local_world_size), mesh_dim_names=("global", "local")
-        )
-
-        self.global_pg = self.device_mesh_cpu.get_group("global")
-        self.local_pg = self.device_mesh.get_group("local")
-
-        self._logger.debug(f"global pg world : {self.global_pg.size()}, local pg: {self.local_pg.size()}")
-
 
 class Diloco:
     """

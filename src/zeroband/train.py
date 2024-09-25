@@ -154,7 +154,7 @@ def train(config: Config):
     train_dataloader_iterator = iter(train_dataloader)
 
     outer_step = 0
-    num_inner_steps = config.diloco.inner_steps if config.diloco is not None else 1
+    num_inner_steps = config.diloco.inner_steps if config.diloco is not None else 10
 
     logger.info("starting training")
     while True:
@@ -162,9 +162,10 @@ def train(config: Config):
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {outer_step}")
 
+        beginning_outer_step_time = time.monotonic()
+
         for inner_step in range(num_inner_steps):
             loss_batch = 0
-            beginning_step_time = time.monotonic()
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -197,19 +198,14 @@ def train(config: Config):
             # syncing loss across all data parallel rank
             # todo(sami): when using diloco make sure that the loss is computed only on local world
 
-            time_taken = time.monotonic() - beginning_step_time
-            tokens_per_second = config.data.seq_length * config.optim.batch_size / time_taken
-
-            mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
-
             metrics = {
                 "Loss": loss_batch.item(),
                 "step": real_step,
                 "inner_lr": inner_lr,
-                "tokens_per_second": tokens_per_second,
+                # "tokens_per_second": tokens_per_second,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": real_step * config.optim.batch_size * config.data.seq_length,
-                "mfu": mfu,
+                # "mfu": mfu,
             }
 
             if config.diloco is not None:
@@ -218,11 +214,19 @@ def train(config: Config):
             if world_info.rank == 0:
                 metric_logger.log(metrics)
 
-            log = f"step: {real_step}, loss: {loss_batch.item():.4f}, tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}"
+            log = f"step: {real_step}, loss: {loss_batch.item():.4f}"  # , tokens_per_second: {metrics['tokens_per_second']:.2f}, mfu: {mfu:.2f}
             if config.diloco is not None:
                 log += f", diloco_peers: {metrics['num_peers']}"
 
             logger.info(log)
+
+        time_taken = time.monotonic() - beginning_outer_step_time
+        tokens_per_second = config.data.seq_length * config.optim.batch_size / time_taken
+
+        mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
+        if world_info.rank == 0:
+            metric_logger.log({"tokens_per_second": tokens_per_second, "mfu": mfu})
+            logger.info(f"tokens_per_second: {tokens_per_second:.2f}, mfu: {mfu:.2f}")
 
         if config.diloco is not None:
             diloco.step(model)

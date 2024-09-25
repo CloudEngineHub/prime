@@ -164,7 +164,7 @@ def train(config: Config):
 
         for inner_step in range(num_inner_steps):
             loss_batch = 0
-            beginning_step_time = time.time()
+            beginning_step_time = time.monotonic()
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -197,7 +197,7 @@ def train(config: Config):
             # syncing loss across all data parallel rank
             # todo(sami): when using diloco make sure that the loss is computed only on local world
 
-            time_taken = time.time() - beginning_step_time
+            time_taken = time.monotonic() - beginning_step_time
             tokens_per_second = config.data.seq_length * config.optim.batch_size / time_taken
 
             mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size

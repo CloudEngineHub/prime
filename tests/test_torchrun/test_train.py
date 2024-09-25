@@ -28,7 +28,7 @@ def gpus_to_use(num_nodes, num_gpu, rank):
     return ",".join(map(str, range(rank * num_gpu, (rank + 1) * num_gpu)))
 
 
-def _test_multi_gpu(num_gpus, config, diloco: bool):
+def _test_multi_gpu(num_gpus, config):
     num_nodes, num_gpu = num_gpus[0], num_gpus[1]
 
     processes = []
@@ -56,10 +56,10 @@ def _test_multi_gpu(num_gpus, config, diloco: bool):
 
 @pytest.mark.parametrize("num_gpus", [[1, 1], [2, 1], [1, 2]])
 def test_multi_gpu(num_gpus):
-    _test_multi_gpu(num_gpus, "debug/debug.toml", diloco=False)
+    _test_multi_gpu(num_gpus, "debug/debug.toml")
 
 
 @pytest.mark.parametrize("num_gpus", [[1, 2], [2, 2]])
 def test_multi_gpu_diloco(num_gpus):
     # we don't test 1,1 and 2,1 because 1 solo gpu failed with fsdp
-    _test_multi_gpu(num_gpus, "debug/diloco.toml", diloco=True)
+    _test_multi_gpu(num_gpus, "debug/diloco.toml")

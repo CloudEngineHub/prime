@@ -2,7 +2,7 @@
 
 #
 # simulate multi nodes on one gpu. start N torchrun on X gpu locally.
-# example how to run ./scripts/simulate_multi_node.sh 2 1  src/zeroband/train.py @configs/debug/debug.toml
+# example how to run ./scripts/simulate_multi_node.sh 2 1  src/zeroband/train.py @configs/debug/normal.toml
 
 # Function to get CUDA devices based on the number of GPUs and index
 function get_cuda_devices() {

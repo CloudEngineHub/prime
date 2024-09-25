@@ -123,16 +123,11 @@ class Diloco:
             # in shard_grad_op mode, only the local rank 0 has the model in cpu
             # we first copy the model to the gpu 0 and then broadcast it to the other gpu as
             # gpu to gpu is faster than cpu to gpu with nvlink
-
-            for i, (param_offloaded, param) in enumerate(zip(self.cpu_model, model.parameters())):
-                # todo: we can probably overlap both comm here
-                if self.world_info.local_rank == 0:
-                    self._logger.debug(
-                        f"i: {i}  shape param {param.data.shape} shape offloaded {param_offloaded.data.shape}"
-                    )
+            if self.world_info.local_rank == 0:
+                for param_offloaded, param in zip(self.cpu_model, model.parameters()):
+                    # todo: we can probably overlap both comm here
                     param.data = param_offloaded.data.to("cuda")
-
-                dist.broadcast(tensor=param.data, src=0, group=self.elastic_device_mesh.local_pg)
+                    dist.broadcast(tensor=param.data, src=0, group=self.elastic_device_mesh.local_pg)
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """

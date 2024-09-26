@@ -103,7 +103,7 @@ class Diloco:
 
     def sync_inner_model(self, model: nn.Module):
         """
-        Sync the inner model from the global process group to the local process group
+        Sync the inner model from the CPU outer model to GPU
         """
 
         self._logger.debug("sync inner model")

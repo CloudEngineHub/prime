@@ -27,6 +27,8 @@ from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 
+from zeroband.testing import get_module_signature
+
 
 class DataConfig(BaseConfig):
     seq_length: int = 1024
@@ -110,8 +112,21 @@ def train(config: Config):
         config.data.seq_length,
     )
 
+    from torch.distributed.distributed_c10d import BroadcastOptions
     elastic_device_mesh = ElasticDeviceMesh()
+    if world_info.rank == 0:
+        for param in model.parameters():
+            # TODO: Kinda ugly but somethings wrong with the world registration
+            #dist.broadcast(param.data, src=0, group=elastic_device_mesh.global_pg)
+            opts = BroadcastOptions()
+            opts.rootRank = 0
+            opts.rootTensor = 0
+            elastic_device_mesh.global_pg.broadcast([param.data], opts)
 
+    for param in model.parameters():
+        dist.broadcast(param.data, src=0, group=elastic_device_mesh.local_pg)
+
+    print(f"[Rank {world_info.rank}] {get_module_signature(model)}")
     model = FSDP(
         model,
         sharding_strategy=sharding_strategy,
@@ -128,7 +143,8 @@ def train(config: Config):
         if world_info.local_world_size == 1:
             raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
 
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        with FSDP.summon_full_params(model):
+            diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
@@ -163,6 +179,8 @@ def train(config: Config):
             logger.info(f"outer_step step: {outer_step}")
 
         for inner_step in range(num_inner_steps):
+            with FSDP.summon_full_params(model):
+                print(f"[Rank {world_info.rank}] {get_module_signature(model)}")
             loss_batch = 0
 
             for grad_acc_step in range(gradient_accumulation_steps):
@@ -225,7 +243,10 @@ def train(config: Config):
             logger.info(log)
 
         if config.diloco is not None:
-            diloco.step(model)
+            with FSDP.summon_full_params(model):
+                print(f"[Rank {world_info.rank}] pre diloco step {get_module_signature(model)}")
+                diloco.step(model)
+                print(f"[Rank {world_info.rank}] post diloco step {get_module_signature(model)}")
 
         outer_step += 1
 

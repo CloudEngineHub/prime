@@ -69,17 +69,20 @@ class Diloco:
         Sync the pseudo gradient from the local process group to the global process group
         """
         self._logger.debug("sync pseudo gradient")
+        works = []
         if self.elastic_device_mesh.global_pg is not None:
             for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
                 # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
                 param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
-            # gloo does not support AVG
-            param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
-            dist.all_reduce(
-                param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
-            )
-            # todo async here
+                # gloo does not support AVG
+                param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
+                work = dist.all_reduce(
+                    param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
+                )
+                works.append(work)
+        for work in works:
+            work.wait()
 
     def sync_inner_model(self, model: nn.Module):
         """
@@ -88,7 +91,10 @@ class Diloco:
 
         self._logger.debug("sync inner model")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            param.data = param_offloaded.data.to("cuda")  # todo: use copy_ here
+            param.data.copy_(param_offloaded.data)
+        
+        for param in model.parameters():
+            dist.broadcast(param.data, src=0, group=self.elastic_device_mesh.local_pg)
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """

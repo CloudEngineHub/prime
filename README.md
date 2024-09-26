@@ -50,11 +50,21 @@ ZERO_BAND_LOG_LEVEL=DEBUG torchrun  --nproc_per_node=2 src/zeroband/train.py @co
 
 ## run diloco
 
-To run diloco locally you can use the helper script `scripts/simulatsimulate_multi_nodee_mutl.sh`
+To run diloco locally you can use the helper script `scripts/simulatsimulate_multi_nodee_mutl.sh` 
+
+:note: you need 4 gpus to run the following command
 
 ```bash
 ZERO_BAND_LOG_LEVEL=DEBUG ./scripts/simulate_multi_node.sh 2 2 src/zeroband/train.py @configs/debug/diloco.toml
 ```
+
+if you have only two gpus
+
+```bash
+ZERO_BAND_LOG_LEVEL=DEBUG ./scripts/simulate_multi_node.sh 2 1 src/zeroband/train.py @configs/debug/diloco.toml
+```
+
+One gpu is not supported at the moment because of a fsdp bug in our implementation.
 
 ## run test
 

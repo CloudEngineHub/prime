@@ -192,9 +192,9 @@ def train(config: Config):
             real_step = outer_step * num_inner_steps + inner_step + 1  # add + 1 because inner_step start at 0
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
-            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG)
-            # syncing loss across all data parallel rank
-            # todo(sami): when using diloco make sure that the loss is computed only on local world
+            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # syncing loss across all data parallel rank within a nodes
+
             perf_counter.count_tokens(config.data.seq_length * config.optim.batch_size)
 
             metrics = {

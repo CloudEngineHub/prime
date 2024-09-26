@@ -10,8 +10,6 @@ import torch.distributed as dist
 import torch
 import pytest
 
-
-import os
 import multiprocessing
 
 
@@ -19,11 +17,8 @@ import multiprocessing
 def test_all_reduce(world_size, random_available_port, dist_environment):
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, local_rank=rank, world_size=world_size):
-            print(f"os.environ['LOCAL_RANK'] {os.environ['WORLD_SIZE']}")
             data = (rank + 1) * torch.ones(10, 10).to("cuda")
-            print(data.mean())
             dist.all_reduce(data, op=dist.ReduceOp.SUM)
-            print(data.mean())
             assert data.mean() == sum([i + 1 for i in range(world_size)])
 
     processes = [multiprocessing.Process(target=all_reduce, args=(rank, world_size)) for rank in range(world_size)]

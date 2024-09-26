@@ -45,15 +45,17 @@ def random_available_port():
 @pytest.fixture()
 def dist_environment() -> callable:
     @contextmanager
-    def dist_environment(random_available_port, local_rank=0, world_size=1):
+    def dist_environment(random_available_port, local_rank=0, world_size=1, local_world_size=1):
         with mock.patch.dict(
             os.environ,
             {
                 "LOCAL_RANK": str(local_rank),
                 "WORLD_SIZE": str(world_size),
+                "LOCAL_WORLD_SIZE": str(local_world_size),
                 "RANK": str(local_rank),
                 "MASTER_ADDR": "localhost",
                 "MASTER_PORT": str(random_available_port),
+                "ZERO_BAND_LOG_LEVEL": "DEBUG",
             },
         ):
             try:

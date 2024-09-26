@@ -7,6 +7,7 @@ from datetime import timedelta
 import time
 from typing import List, Tuple, Optional
 import uuid
+from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 
 TCPSTORE_TIMEOUT = timedelta(seconds=10)
@@ -94,7 +95,7 @@ class ElasticDeviceMesh:
         if self.world_info.rank == 0:
             self.global_pg = self._init_global_pg()
         else:
-            self.global_pg = None
+            self.global_pg = FakeProcessGroup(self.world_info.rank, self.world_info.world_size)
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")

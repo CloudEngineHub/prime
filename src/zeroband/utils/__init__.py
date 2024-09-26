@@ -82,6 +82,9 @@ class PerfCounter:
     def count_tokens(self, tokens: int):
         self.tokens.append(tokens)
         self.times.append(time.perf_counter())
+        if len(self.tokens) > self.window_size:
+            self.tokens.pop(0)
+            self.times.pop(0)
 
     def get_tokens_per_second(self) -> float | None:
         if len(self.tokens) < 2:

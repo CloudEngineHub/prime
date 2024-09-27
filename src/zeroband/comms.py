@@ -2,11 +2,9 @@ from torch.distributed.device_mesh import init_device_mesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
-import os
 from datetime import timedelta
 import time
 from typing import List, Tuple, Optional
-import uuid
 from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 
@@ -98,14 +96,9 @@ class ElasticDeviceMesh:
 
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
-        if "GLOBAL_RANK" in os.environ:
-            self._init_unique_id()
+        if self.world_info.global_world_size > 1:
             if self.world_info.rank == 0:
                 self.global_pg = self._init_global_pg()
-                # from torch.distributed.distributed_c10d import _world
-                # global_rank = int(os.environ["GLOBAL_RANK"])
-                # _world.pg_group_ranks[self.global_pg] = {i: global_rank for i in range(self.world_info.world_size)}
-                # _world.pg_map[self.global_pg] = "gloo", self.global_store
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")
@@ -151,13 +144,13 @@ class ElasticDeviceMesh:
             )
             if self.world_info.global_rank == 0:
                 store.set("status", "running")
-            store.set(f"rank_{self.unique_id}", str(self.world_info.global_rank))
+            store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         elif status == "running":
             # Node wants to join
-            _queue_join(store, self.unique_id)
+            _queue_join(store, self.world_info.global_unique_id)
             _wait_for_status(store, "reinit")
             # Get assigned rank
-            self.world_info.global_rank = int(store.get(f"rank_{self.unique_id}").decode("utf-8"))
+            self.world_info.global_rank = int(store.get(f"rank_{self.world_info.global_unique_id}").decode("utf-8"))
             # Get updated world_size
             self.world_info.global_world_size = int(store.get("world_size").decode("utf-8"))
             self.mesh_count = int(store.get("mesh_count").decode("utf-8"))
@@ -173,27 +166,6 @@ class ElasticDeviceMesh:
         self.global_store = store
         self.leaving = False
         return pg
-
-    def _init_unique_id(self):
-        """Initialize a unique ID for the node.
-        If TORCH_UNIQUE_ID is set, use that.
-        Otherwise, local rank 0 generates an ID and broadcasts to other nodes.
-        """
-        if "TORCH_UNIQUE_ID" in os.environ:
-            self.unique_id = os.environ["TORCH_UNIQUE_ID"]
-            return
-        if self.local_rank == 0:
-            self.unique_id = str(uuid.uuid4())
-            with open("/tmp/torch_unique_id", "w") as f:
-                f.write(self.unique_id)
-        else:
-            while True:
-                try:
-                    with open("/tmp/torch_unique_id", "r") as f:
-                        self.unique_id = f.read()
-                    break
-                except FileNotFoundError:
-                    time.sleep(0.1)
 
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes."""
@@ -238,7 +210,7 @@ class ElasticDeviceMesh:
             return
 
         # Check if we got remapped
-        prev_uuid_rank = int(self.global_store.get(f"rank_{self.unique_id}").decode("utf-8"))
+        prev_uuid_rank = int(self.global_store.get(f"rank_{self.world_info.global_unique_id}").decode("utf-8"))
         new_uuid_rank = int(self.global_store.get(f"rank_map_{prev_uuid_rank}").decode("utf-8"))
         self.rank = new_uuid_rank + self.local_rank
 
@@ -254,6 +226,6 @@ class ElasticDeviceMesh:
             self.global_store.set("status", "running")
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)
         if self.local_rank == 0 and new_uuid_rank != prev_uuid_rank:
-            self.global_store.set(f"rank_{self.unique_id}", str(new_uuid_rank))
+            self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(new_uuid_rank))
         # Reinitialize sub process groups
         self.world_rank = self.rank // self.local_world_size

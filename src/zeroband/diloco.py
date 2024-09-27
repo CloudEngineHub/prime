@@ -99,14 +99,15 @@ class Diloco:
         """
         Offload the model parameters to cpu
         """
-        unique_id = self.elastic_device_mesh.unique_id
         offloaded_params = []
-        os.makedirs("/dev/shm/zeroband", exist_ok=True)
+        os.makedirs(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", exist_ok=True)
 
         for param_name, param in model.named_parameters():
             if param.requires_grad:
                 storage = torch.UntypedStorage.from_file(
-                    f"/dev/shm/zeroband/{unique_id}-{param_name}", True, param.data.untyped_storage().size()
+                    f"/dev/shm/zeroband/{self.world_info.global_unique_id}/{param_name}",
+                    True,
+                    param.data.untyped_storage().size(),
                 )
                 offloaded_param = torch.tensor(storage, dtype=param.dtype, device="cpu")
                 offloaded_param.as_strided_(size=param.data.size(), stride=param.data.stride())
@@ -133,4 +134,4 @@ class Diloco:
         self.sync_inner_model(model)
 
     def __del__(self):
-        shutil.rmtree("/dev/shm/zeroband", ignore_errors=True)
+        shutil.rmtree(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", ignore_errors=True)

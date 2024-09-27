@@ -2,7 +2,7 @@
 ZeroBand is a production ready codebase for decentralized training of LLM
 
 
-## developlment
+## Developlment
 
 install uv
 
@@ -40,22 +40,22 @@ run your code using
 uv run ...
 ```
 
-## quick check
+## Quick check
 
 To check that everything is working you can do
 
 ```bash
-ZERO_BAND_LOG_LEVEL=DEBUG torchrun  --nproc_per_node=2 src/zeroband/train.py @configs/debug/normal.toml
+ZERO_BAND_LOG_LEVEL=DEBUG torchrun --nproc_per_node=2 src/zeroband/train.py @configs/debug/normal.toml
 ```
 
-## run diloco
+## Run diloco
 
 To run diloco locally you can use the helper script `scripts/simulatsimulate_multi_nodee_mutl.sh` 
 
 :note: you need 4 gpus to run the following command
 
 ```bash
-ZERO_BAND_LOG_LEVEL=DEBUG ./scripts/simulate_multi_node.sh 2 2 src/zeroband/train.py @configs/debug/diloco.toml
+ZERO_BAND_LOG_LEVEL=DEBUG ./scripts/simulate_multi_node_diloco.sh 2 2 src/zeroband/train.py @configs/debug/diloco.toml
 ```
 
 if you have only two gpus

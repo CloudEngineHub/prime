@@ -118,20 +118,7 @@ def train(config: Config):
         config.data.seq_length,
     )
 
-    from torch.distributed.distributed_c10d import BroadcastOptions
-
     elastic_device_mesh = ElasticDeviceMesh()
-    if world_info.rank == 0:
-        for param in model.parameters():
-            # TODO: Kinda ugly but somethings wrong with the world registration
-            # dist.broadcast(param.data, src=0, group=elastic_device_mesh.global_pg)
-            opts = BroadcastOptions()
-            opts.rootRank = 0
-            opts.rootTensor = 0
-            elastic_device_mesh.global_pg.broadcast([param.data], opts)
-
-    for param in model.parameters():
-        dist.broadcast(param.data, src=0, group=elastic_device_mesh.local_pg)
 
     model = FSDP(
         model,

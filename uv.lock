@@ -1526,6 +1526,27 @@ wheels = [
 ]
 
 [[package]]
+name = "torchdata"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "torch" },
+    { name = "urllib3" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/8a/3251c64214ab09d1c1756677f36e78f8cf0ce9dabb3a21386e78ef50540e/torchdata-0.8.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:082e27b2acb1768cb6a30ddd2f8d9c68e407164ce207194bf8bfa616d621a801", size = 4904801 },
+    { url = "https://files.pythonhosted.org/packages/da/90/058fe345dfac8b50d2d0fdb421ce04c78c88b06a5f220dd8d64d424ccdbe/torchdata-0.8.0-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:44f7875a62f3fab86e2f8e5af92c4929f8f7390aa17bd697fdd0965723bc1e98", size = 2691733 },
+    { url = "https://files.pythonhosted.org/packages/2f/54/d6f64a6e210ee50b68220d3b5564ffdda8bcc8d26c02a39a8a587caffe2f/torchdata-0.8.0-cp310-cp310-win_amd64.whl", hash = "sha256:07e985d69c5692dda9181a8ef3e14c7f08b0460226f7cd4cf1c1bb0e6975700f", size = 1341187 },
+    { url = "https://files.pythonhosted.org/packages/82/aa/4da6c725b03fb51c5a10405803308afd43970e66aad45e8cca872786ba1b/torchdata-0.8.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:1635cecf4226fec8539c5d06ba764a48c41363ea0bbea09407ab379828527a8b", size = 4904783 },
+    { url = "https://files.pythonhosted.org/packages/64/e8/c691e8e73dc6cbb09ba84ffb0341a6466d3184ff422cda07ebade3b929ef/torchdata-0.8.0-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:2d63d3fdcc68cf912c81709c8704b9cf435ba89bceed41a365e7362eb5740394", size = 2691483 },
+    { url = "https://files.pythonhosted.org/packages/2c/f6/438a82c2f8d69114ef943c0b58f69f66ea5249bd7b2e4799d44f185f7797/torchdata-0.8.0-cp311-cp311-win_amd64.whl", hash = "sha256:8db8a7cb946e82983517cff94317f1898128cbfe4f48821d0c3509c0cdafa4c9", size = 1341021 },
+    { url = "https://files.pythonhosted.org/packages/3e/f7/2d1cd02ebcca73ff151dd94b0a08d30808574d944a360470b52a89f0be4e/torchdata-0.8.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4e3f7efac3d8a4bd4efcb1427869c04043d0a0a019f9aa1eb381bd6c6b321e62", size = 4905186 },
+    { url = "https://files.pythonhosted.org/packages/ea/94/d9ac51405d4259094dfa0a1dc3fa4ed2efe057d194873c9f1ba1881b06c9/torchdata-0.8.0-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:bb878e243e58526a5b3ac54583f7c029ad643a34ade798800c1878c83f1c36ee", size = 2691660 },
+    { url = "https://files.pythonhosted.org/packages/d2/c4/623f7237c69606d202870bc9e44a8ed9070cc3eb1ac03f02c457083aa746/torchdata-0.8.0-cp312-cp312-win_amd64.whl", hash = "sha256:7a43fc7e8d3ae2632859f15d5439cd97b83af559fecd8963e5f09e08f93b81e2", size = 1341201 },
+]
+
+[[package]]
 name = "tqdm"
 version = "4.66.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1797,6 +1818,7 @@ dependencies = [
     { name = "pydantic-config" },
     { name = "setuptools" },
     { name = "torch" },
+    { name = "torchdata" },
     { name = "transformers" },
 ]
 
@@ -1820,6 +1842,7 @@ requires-dist = [
     { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=e529c9c" },
     { name = "setuptools" },
     { name = "torch", specifier = "==2.4.1" },
+    { name = "torchdata", specifier = ">=0.8.0" },
     { name = "transformers", specifier = ">=4.44.2" },
     { name = "wandb", marker = "extra == 'all'" },
 ]

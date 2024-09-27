@@ -1,3 +1,5 @@
+import os
+import shutil
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
@@ -7,6 +9,7 @@ from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
 
+from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
@@ -57,7 +60,7 @@ class Diloco:
 
         self._init_offloaded_optimizer(model=model)
 
-    def _init_offloaded_optimizer(self, model):
+    def _init_offloaded_optimizer(self, model: nn.Module):
         self.param_list_cpu = self.get_offloaded_param(model)
         self.outer_optimizer = torch.optim.SGD(
             self.param_list_cpu, lr=self.config.outer_lr, momentum=0.9, nesterov=True
@@ -70,17 +73,17 @@ class Diloco:
         """
         self._logger.debug("sync pseudo gradient")
         works = []
-        if self.elastic_device_mesh.global_pg is not None:
-            for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-                # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
-                param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+        # TODO: This assumes all params require grad, which is used by the offload
+        for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+            # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
+            param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
-                # gloo does not support AVG
-                param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
-                work = dist.all_reduce(
-                    param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
-                )
-                works.append(work)
+            # gloo does not support AVG
+            param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
+            work = dist.all_reduce(
+                param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
+            )
+            works.append(work)
         for work in works:
             work.wait()
 
@@ -92,31 +95,41 @@ class Diloco:
         self._logger.debug("sync inner model")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             param.data.copy_(param_offloaded.data)
-        
-        for param in model.parameters():
-            dist.broadcast(param.data, src=0, group=self.elastic_device_mesh.local_pg)
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """
         Offload the model parameters to cpu
         """
+        unique_id = self.elastic_device_mesh.unique_id
         offloaded_params = []
+        os.makedirs("/dev/shm/zeroband", exist_ok=True)
 
-        for param in model.parameters():
+        for param_name, param in model.named_parameters():
             if param.requires_grad:
-                offloaded_param = param.data.detach().clone().to("cpu")
-                offloaded_param.requires_grad = True
+                storage = torch.UntypedStorage.from_file(f"/dev/shm/zeroband/{unique_id}-{param_name}", True, param.data.untyped_storage().size())
+                offloaded_param = torch.tensor(storage, dtype=param.dtype, device="cpu")
+                offloaded_param.as_strided_(size=param.data.size(), stride=param.data.stride())
+                if self.world_info.rank == 0:
+                    # TODO: Can we async or split the copy among gpus probs overkill?
+                    offloaded_param.copy_(param.data)
+                offloaded_param.requires_grad = False # TODO: check if we need to set this to True
                 offloaded_params.append(offloaded_param)
 
+        dist.barrier()
         return offloaded_params
 
     def step(self, model: nn.Module):
         """
         Step the optimizer
         """
-        self.sync_pseudo_gradient(model)
-        if self.outer_optimizer is not None:
-            self.outer_optimizer.step()
-            self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+        if self.world_info.rank == 0:
+            self.sync_pseudo_gradient(model)
+            if self.outer_optimizer is not None:
+                self.outer_optimizer.step()
+                self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
+        dist.barrier()
         self.sync_inner_model(model)
+    
+    def __del__(self):
+        shutil.rmtree("/dev/shm/zeroband", ignore_errors=True)

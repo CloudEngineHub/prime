@@ -1,3 +1,4 @@
+import hashlib
 import time
 import torch
 from torch.distributed.fsdp import ShardingStrategy
@@ -90,3 +91,17 @@ class PerfCounter:
         if len(self.tokens) < 2:
             return None
         return sum(self.tokens) / (self.times[-1] - self.times[0])
+
+
+def get_model_hash(model: torch.nn.Module) -> str:
+    """
+    Get the hash of the model parameters.
+    """
+    # Concatenate all model parameters into a single tensor
+    all_params = torch.cat([p.data.view(-1) for p in model.parameters()])
+
+    # Convert the tensor to a byte string
+    param_bytes = all_params.cpu().numpy().tobytes()
+
+    # Compute SHA256 hash
+    return hashlib.sha256(param_bytes).hexdigest()

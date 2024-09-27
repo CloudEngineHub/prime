@@ -20,7 +20,7 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import PerfCounter, get_sharding_strategy
+from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
@@ -51,6 +51,8 @@ class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     sharding_strategy: str = "SHARD_GRAD_OP"
+
+    log_model_hash: bool = False
 
 
 class Config(BaseConfig):
@@ -92,12 +94,16 @@ def train(config: Config):
         num_workers=config.data.num_workers,
         fake_data=config.data.fake,
     )
-
     model, model_config = get_model(
         config.name_model,
         config.type_model,
         vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE,
     )
+
+    if config.train.log_model_hash:
+        # Compute SHA256 hash
+        logger.info(f"Model hash: {get_model_hash(model)}")
+
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
@@ -139,13 +145,6 @@ def train(config: Config):
         model = torch.compile(model)
     logger.debug("model compiled and fsdped")
 
-    if config.diloco is not None:
-        if world_info.local_world_size == 1:
-            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
-
-        with FSDP.summon_full_params(model):
-            diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
-
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -153,6 +152,12 @@ def train(config: Config):
         weight_decay=config.optim.weight_decay,
         betas=(config.optim.adam_betas1, config.optim.adam_betas2),
     )
+
+    if config.diloco is not None:
+        if world_info.local_world_size == 1:
+            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
+
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,
@@ -208,9 +213,9 @@ def train(config: Config):
             real_step = outer_step * num_inner_steps + inner_step + 1  # add + 1 because inner_step start at 0
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
-            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG)
-            # syncing loss across all data parallel rank
-            # todo(sami): when using diloco make sure that the loss is computed only on local world
+            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # syncing loss across all data parallel rank within a nodes
+
             perf_counter.count_tokens(config.data.seq_length * config.optim.batch_size)
 
             metrics = {
@@ -263,6 +268,7 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
+    torch.manual_seed(42)  # this ensure same weight init across diloco workers
 
     world_info = get_world_info()
     logger = get_logger()

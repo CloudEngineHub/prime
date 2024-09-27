@@ -46,11 +46,11 @@ class Diloco:
         config: DilocoConfig,
         model: nn.Module,
         fsdp_sharding_strategy: ShardingStrategy,
-        elastic_device_mesh: ElasticDeviceMesh,
+        global_pg: dist.ProcessGroup,
     ):
         self.config = config
         self.fsdp_sharding_strategy = fsdp_sharding_strategy
-        self.elastic_device_mesh = elastic_device_mesh
+        self.global_pg = global_pg
 
         self._logger = get_logger()
         self.world_info = get_world_info()
@@ -75,7 +75,6 @@ class Diloco:
         works = []
         # TODO: This assumes all params require grad, which is used by the offload
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            # todo check how to handle the SHARD_GRAD_OP strategy where the weight are replicated across the local devices
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG
@@ -89,7 +88,7 @@ class Diloco:
 
     def sync_inner_model(self, model: nn.Module):
         """
-        Sync the inner model from the global process group to the local process group
+        Sync the inner model from the CPU outer model to GPU
         """
 
         self._logger.debug("sync inner model")

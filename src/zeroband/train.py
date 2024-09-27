@@ -85,8 +85,8 @@ def train(config: Config):
 
     train_dataloader = get_dataloader(
         tokenizer=tokenizer,
-        world_size=world_info.world_size,
-        rank=world_info.rank,
+        world_size=world_info.world_size * world_info.global_world_size,
+        rank=world_info.rank + world_info.global_rank * world_info.global_world_size,
         seq_length=config.data.seq_length,
         batch_size=config.train.micro_bs,
         num_workers=config.data.num_workers,
@@ -95,7 +95,9 @@ def train(config: Config):
     model, model_config = get_model(
         config.name_model,
         config.type_model,
-        vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE,
+        vocab_size=tokenizer.vocab_size
+        if config.name_model != "debugmodel" or not config.data.fake
+        else TEST_VOCAB_SIZE,
     )
 
     if config.train.log_model_hash:

@@ -2,7 +2,7 @@
 ZeroBand is a production ready codebase for decentralized training of LLM
 
 
-## Developlment
+## Development
 
 install uv
 
@@ -71,8 +71,15 @@ One gpu is not supported at the moment because of a fsdp bug in our implementati
 You need a machine with a least two gpus to run the full test suite.
 
 Some test must be run from the root directory.
-
 ```bash
 uv run pytest
 ```
 
+## Environment variables
+| Environment Variable  | Description                                      | Default Value |
+|-----------------------|--------------------------------------------------|---------------|
+| `GLOBAL_UNIQUE_ID`    | Unique identifier worker in global store.        | `""` (empty string) |
+| `GLOBAL_ADDR`         | IP Address of the global store                   | `""` (empty string) |
+| `GLOBAL_PORT`         | Port number of the global store.                 | `-1` |
+| `GLOBAL_WORLD_SIZE`   | The size of the global process group.            | `1` |
+| `GLOBAL_RANK`         | Rank of the process in the global process group. | `0` |

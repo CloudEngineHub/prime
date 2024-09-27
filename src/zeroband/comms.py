@@ -11,8 +11,9 @@ from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 
 TCPSTORE_TIMEOUT = timedelta(seconds=10)
-MAX_JOINERS = 100 # Maximum number of nodes that can join in a single reinit
-MAX_LEAVERS = 100 # Maximum number of nodes that can leave in a single reinit
+MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
+MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
+
 
 def _wait_for_status(store: dist.Store, status: Optional[str] = None) -> str:
     while True:
@@ -26,6 +27,7 @@ def _wait_for_status(store: dist.Store, status: Optional[str] = None) -> str:
                 raise e
             time.sleep(0.1)
 
+
 def _queue_join(store: dist.Store, unique_id: str):
     for i in range(MAX_JOINERS):
         joiner_id = store.get(f"joiner_{i}").decode("utf-8")
@@ -36,6 +38,7 @@ def _queue_join(store: dist.Store, unique_id: str):
     else:
         raise RuntimeError("Too many joiners")
 
+
 def _queue_leave(store: dist.Store, unique_id: str):
     for i in range(MAX_LEAVERS):
         leaver_id = store.get(f"leaver_{i}").decode("utf-8")
@@ -45,6 +48,7 @@ def _queue_leave(store: dist.Store, unique_id: str):
             break
     else:
         raise RuntimeError("Too many leavers")
+
 
 def _get_joiners_and_leavers(store: dist.Store) -> Tuple[List[str], List[str]]:
     joiners = []
@@ -62,17 +66,19 @@ def _get_joiners_and_leavers(store: dist.Store) -> Tuple[List[str], List[str]]:
     print(f"Joiners: {joiners}, Leavers: {leavers}")
     return joiners, leavers
 
+
 def _clear_joiners_and_leavers(store: dist.Store):
     store.set("joiner_0", "null")
     store.set("leaver_0", "null")
 
+
 class ElasticDeviceMesh:
     """A class to manage the process groups for elastic training without restarts.
-    
+
     The way it works is rank 0 coordinates the joining and leaving of nodes.
     Rank 0 manages the status to coordinate the creation and recreation of the process groups.
     When a node wants to join, rank 0 will setup the store so that all nodes know the new world size and their respective ranks.
-    
+
     Store keys used:
     - status: "init", "running", "reinit"
     - world_size: The current world size
@@ -96,15 +102,17 @@ class ElasticDeviceMesh:
             self._init_unique_id()
             if self.world_info.rank == 0:
                 self.global_pg = self._init_global_pg()
-                #from torch.distributed.distributed_c10d import _world
-                #global_rank = int(os.environ["GLOBAL_RANK"])
-                #_world.pg_group_ranks[self.global_pg] = {i: global_rank for i in range(self.world_info.world_size)}
-                #_world.pg_map[self.global_pg] = "gloo", self.global_store
+                # from torch.distributed.distributed_c10d import _world
+                # global_rank = int(os.environ["GLOBAL_RANK"])
+                # _world.pg_group_ranks[self.global_pg] = {i: global_rank for i in range(self.world_info.world_size)}
+                # _world.pg_map[self.global_pg] = "gloo", self.global_store
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")
         self._device_mesh = init_device_mesh(
-            "cuda", (self.world_info.nnodes, self.world_info.local_world_size), mesh_dim_names=("internode", "intranode")
+            "cuda",
+            (self.world_info.nnodes, self.world_info.local_world_size),
+            mesh_dim_names=("internode", "intranode"),
         )
         self.local_pg = self._device_mesh.get_group("intranode")
 
@@ -112,10 +120,10 @@ class ElasticDeviceMesh:
             self._logger.debug(f"global pg world : {self.global_pg.size()}, local pg: {self.local_pg.size()}")
         else:
             self._logger.debug(f"local pg world : {self.local_pg.size()}")
-    
+
     def __del__(self):
         dist.destroy_process_group()
-    
+
     def _init_global_pg(self) -> dist.Store:
         global_addr = os.environ["GLOBAL_ADDR"]
         global_port = int(os.environ["GLOBAL_PORT"])
@@ -138,7 +146,7 @@ class ElasticDeviceMesh:
             status = "init"
         else:
             status = _wait_for_status(store)
-        
+
         if status == "init":
             # First time initialization
             self.mesh_count = 0
@@ -178,18 +186,17 @@ class ElasticDeviceMesh:
             return
         if self.local_rank == 0:
             self.unique_id = str(uuid.uuid4())
-            with open('/tmp/torch_unique_id', 'w') as f:
+            with open("/tmp/torch_unique_id", "w") as f:
                 f.write(self.unique_id)
         else:
             while True:
                 try:
-                    with open('/tmp/torch_unique_id', 'r') as f:
+                    with open("/tmp/torch_unique_id", "r") as f:
                         self.unique_id = f.read()
                     break
                 except FileNotFoundError:
                     time.sleep(0.1)
 
-    
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes."""
         # Find joiners and leavers
@@ -204,12 +211,12 @@ class ElasticDeviceMesh:
         for i, rank in enumerate(live_ranks):
             self.global_store.set(f"rank_map_{rank}", str(i * self.local_world_size))
         new_world_size = len(live_ranks) * self.local_world_size
-        
+
         # Give joiners new ranks
         for joiner_id in joiners:
             self.global_store.set(f"rank_{joiner_id}", str(new_world_size))
             new_world_size += self.local_world_size
-        
+
         # Update world_size
         self.global_store.set("world_size", str(new_world_size))
         self.global_store.set("mesh_count", str(self.mesh_count + 1))
@@ -224,7 +231,7 @@ class ElasticDeviceMesh:
         status = self.global_store.get("status").decode("utf-8")
         if status == "running":
             return
-        
+
         print("Reinitializing device mesh")
         dist.destroy_process_group()
         print("Destroyed process group")
@@ -240,8 +247,10 @@ class ElasticDeviceMesh:
         self.world_size = int(self.global_store.get("world_size").decode("utf-8"))
         self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
         self.prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
-        dist.init_process_group(backend="cpu:gloo,cuda:nccl", store=self.prefix_store, rank=self.rank, world_size=self.world_size)
-        
+        dist.init_process_group(
+            backend="cpu:gloo,cuda:nccl", store=self.prefix_store, rank=self.rank, world_size=self.world_size
+        )
+
         if self.rank == 0:
             _clear_joiners_and_leavers(self.global_store)
             self.global_store.set("status", "running")

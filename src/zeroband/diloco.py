@@ -9,11 +9,11 @@ from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
 
-from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
+
 
 class Diloco:
     """
@@ -106,13 +106,15 @@ class Diloco:
 
         for param_name, param in model.named_parameters():
             if param.requires_grad:
-                storage = torch.UntypedStorage.from_file(f"/dev/shm/zeroband/{unique_id}-{param_name}", True, param.data.untyped_storage().size())
+                storage = torch.UntypedStorage.from_file(
+                    f"/dev/shm/zeroband/{unique_id}-{param_name}", True, param.data.untyped_storage().size()
+                )
                 offloaded_param = torch.tensor(storage, dtype=param.dtype, device="cpu")
                 offloaded_param.as_strided_(size=param.data.size(), stride=param.data.stride())
                 if self.world_info.rank == 0:
                     # TODO: Can we async or split the copy among gpus probs overkill?
                     offloaded_param.copy_(param.data)
-                offloaded_param.requires_grad = False # TODO: check if we need to set this to True
+                offloaded_param.requires_grad = False  # TODO: check if we need to set this to True
                 offloaded_params.append(offloaded_param)
 
         dist.barrier()
@@ -130,6 +132,6 @@ class Diloco:
 
         dist.barrier()
         self.sync_inner_model(model)
-    
+
     def __del__(self):
         shutil.rmtree("/dev/shm/zeroband", ignore_errors=True)

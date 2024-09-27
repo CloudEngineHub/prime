@@ -1,0 +1,12 @@
+name_model = "150M"
+project = "debug_150m_zero_band"
+
+[train]
+micro_bs = 16 # change this base on the gpu
+sharding_strategy = "SHARD_GRAD_OP"
+
+[optim]
+batch_size = 512
+warmup_steps = 1000
+total_steps = 15_000
+lr = 4e-4

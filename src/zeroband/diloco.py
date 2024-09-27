@@ -3,12 +3,12 @@ import shutil
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
+from zeroband.utils import get_module_signature
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
-from zeroband.testing import get_module_signature
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 

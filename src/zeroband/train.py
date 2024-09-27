@@ -124,12 +124,6 @@ def train(config: Config):
         model = torch.compile(model)
     logger.debug("model compiled and fsdped")
 
-    if config.diloco is not None:
-        if world_info.local_world_size == 1:
-            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
-
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
-
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -137,6 +131,12 @@ def train(config: Config):
         weight_decay=config.optim.weight_decay,
         betas=(config.optim.adam_betas1, config.optim.adam_betas2),
     )
+
+    if config.diloco is not None:
+        if world_info.local_world_size == 1:
+            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
+
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,

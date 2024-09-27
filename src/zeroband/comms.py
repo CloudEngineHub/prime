@@ -91,11 +91,15 @@ class ElasticDeviceMesh:
         self.world_info = get_world_info()
 
         # Initialize global process group
-        self._init_unique_id()
-        if self.world_info.rank == 0:
-            self.global_pg = self._init_global_pg()
-        else:
-            self.global_pg = FakeProcessGroup(self.world_info.rank, self.world_info.world_size)
+        self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
+        if "GLOBAL_RANK" in os.environ:
+            self._init_unique_id()
+            if self.world_info.rank == 0:
+                self.global_pg = self._init_global_pg()
+                #from torch.distributed.distributed_c10d import _world
+                #global_rank = int(os.environ["GLOBAL_RANK"])
+                #_world.pg_group_ranks[self.global_pg] = {i: global_rank for i in range(self.world_info.world_size)}
+                #_world.pg_map[self.global_pg] = "gloo", self.global_store
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")

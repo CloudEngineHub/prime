@@ -27,8 +27,6 @@ from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 
-from zeroband.testing import get_module_signature
-
 
 class DataConfig(BaseConfig):
     seq_length: int = 1024
@@ -141,8 +139,7 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        with FSDP.summon_full_params(model):
-            diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,
@@ -231,10 +228,7 @@ def train(config: Config):
             logger.info(log)
 
         if config.diloco is not None:
-            with FSDP.summon_full_params(model):
-                logger.debug("Pre diloco step %s", get_module_signature(model))
-                diloco.step(model)
-                logger.debug("Post diloco step %s", get_module_signature(model))
+            diloco.step(model)
 
         outer_step += 1
 

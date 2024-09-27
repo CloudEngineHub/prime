@@ -69,7 +69,7 @@ def get_dataloader(
         ds = load_dataset("allenai/c4", "en", streaming=True)
 
         def tokenize_function(data):
-            outputs = tokenizer(data["text"], truncation=True, max_length=seq_length)
+            outputs = tokenizer(data["text"], truncation=True, max_length=seq_length, padding="max_length")
             return outputs
 
         tokenized_datasets = ds.map(
@@ -78,6 +78,7 @@ def get_dataloader(
         train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
     data_collator = collate_causal_mask(max_seq_length=seq_length, pad_id=tokenizer.pad_token_id, ignore_index=-100)
+    print(train_dataset, flush=True)
 
     return DataLoader(
         train_dataset,

@@ -8,6 +8,8 @@ from zeroband.utils.logging import get_logger
 from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
+from zeroband.testing import get_module_signature
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
 class DilocoConfig(BaseConfig):
@@ -61,11 +63,12 @@ class Diloco:
         self._init_offloaded_optimizer(model=model)
 
     def _init_offloaded_optimizer(self, model: nn.Module):
-        self.param_list_cpu = self.get_offloaded_param(model)
-        self.outer_optimizer = torch.optim.SGD(
-            self.param_list_cpu, lr=self.config.outer_lr, momentum=0.9, nesterov=True
-        )
-        self._logger.debug("offload model to cpu")
+        with FSDP.summon_full_params(model):
+            self.param_list_cpu = self.get_offloaded_param(model)
+            self.outer_optimizer = torch.optim.SGD(
+                self.param_list_cpu, lr=self.config.outer_lr, momentum=0.9, nesterov=True
+            )
+            self._logger.debug("offload model to cpu")
 
     def sync_pseudo_gradient(self, model: nn.Module):
         """
@@ -124,14 +127,17 @@ class Diloco:
         """
         Step the optimizer
         """
-        if self.world_info.rank == 0:
-            self.sync_pseudo_gradient(model)
-            if self.outer_optimizer is not None:
-                self.outer_optimizer.step()
-                self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+        with FSDP.summon_full_params(model):
+            self._logger.debug("Pre diloco step %s", get_module_signature(model))
+            if self.world_info.rank == 0:
+                self.sync_pseudo_gradient(model)
+                if self.outer_optimizer is not None:
+                    self.outer_optimizer.step()
+                    self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
-        dist.barrier()
-        self.sync_inner_model(model)
+            dist.barrier()
+            self.sync_inner_model(model)
+            self._logger.debug("Post meow diloco step %s", get_module_signature(model))
 
     def __del__(self):
         shutil.rmtree(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", ignore_errors=True)

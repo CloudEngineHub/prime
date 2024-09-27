@@ -154,7 +154,8 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        with FSDP.summon_full_params(model):
+            diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,

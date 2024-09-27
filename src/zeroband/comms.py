@@ -146,7 +146,9 @@ class ElasticDeviceMesh:
             # First time initialization
             self.mesh_count = 0
             self.prefix_store = dist.PrefixStore("mesh_0", store)
-            pg = dist.ProcessGroupGloo(self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT)
+            pg = dist.ProcessGroupGloo(
+                self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
+            )
             if self.world_info.global_rank == 0:
                 store.set("status", "running")
             store.set(f"rank_{self.unique_id}", str(self.world_info.global_rank))
@@ -160,7 +162,9 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(store.get("world_size").decode("utf-8"))
             self.mesh_count = int(store.get("mesh_count").decode("utf-8"))
             self.prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", store)
-            pg = dist.ProcessGroupGloo(self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT)
+            pg = dist.ProcessGroupGloo(
+                self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
+            )
         else:
             # TODO: Could be in "reinit" status
             raise RuntimeError(f"Unknown status {status}")

@@ -20,7 +20,7 @@ import torch.distributed as dist
 from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
 
-from zeroband.utils import PerfCounter, get_sharding_strategy
+from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
@@ -49,6 +49,8 @@ class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     sharding_strategy: str = "SHARD_GRAD_OP"
+
+    log_model_hash: bool = False
 
 
 class Config(BaseConfig):
@@ -90,12 +92,16 @@ def train(config: Config):
         num_workers=config.data.num_workers,
         fake_data=config.data.fake,
     )
-
     model, model_config = get_model(
         config.name_model,
         config.type_model,
         vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" else TEST_VOCAB_SIZE,
     )
+
+    if config.train.log_model_hash:
+        # Compute SHA256 hash
+        logger.info(f"Model hash: {get_model_hash(model)}")
+
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
@@ -244,6 +250,7 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
+    torch.manual_seed(42)  # this ensure same weight init across diloco workers
 
     world_info = get_world_info()
     logger = get_logger()

@@ -154,10 +154,7 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        if world_info.local_world_size == 1:
-            raise ValueError("Diloco is not supported for local_world_size == 1 because of a pytorch bug")
-
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,

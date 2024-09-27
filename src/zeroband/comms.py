@@ -125,20 +125,15 @@ class ElasticDeviceMesh:
         dist.destroy_process_group()
 
     def _init_global_pg(self) -> dist.Store:
-        global_addr = os.environ["GLOBAL_ADDR"]
-        global_port = int(os.environ["GLOBAL_PORT"])
-        global_world_size = int(os.environ["GLOBAL_WORLD_SIZE"])
-        global_rank = int(os.environ["GLOBAL_RANK"])
-
         store = dist.TCPStore(
-            host_name=global_addr,
-            port=global_port,
+            host_name=self.world_info.global_addr,
+            port=self.world_info.global_port,
             timeout=TCPSTORE_TIMEOUT,
-            is_master=(global_rank == 0),
+            is_master=(self.world_info.global_rank == 0),
         )
 
         # Initialize store
-        if global_rank == 0:
+        if self.world_info.global_rank == 0:
             store.set("mesh_count", "0")
             store.set("joiner_0", "null")
             store.set("leaver_0", "null")
@@ -151,28 +146,27 @@ class ElasticDeviceMesh:
             # First time initialization
             self.mesh_count = 0
             self.prefix_store = dist.PrefixStore("mesh_0", store)
-            pg = dist.ProcessGroupGloo(self.prefix_store, global_rank, global_world_size, TCPSTORE_TIMEOUT)
-            if global_rank == 0:
+            pg = dist.ProcessGroupGloo(self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT)
+            if self.world_info.global_rank == 0:
                 store.set("status", "running")
-            store.set(f"rank_{self.unique_id}", str(global_rank))
+            store.set(f"rank_{self.unique_id}", str(self.world_info.global_rank))
         elif status == "running":
             # Node wants to join
             _queue_join(store, self.unique_id)
             _wait_for_status(store, "reinit")
             # Get assigned rank
-            global_rank = int(store.get(f"rank_{self.unique_id}").decode("utf-8"))
+            self.world_info.global_rank = int(store.get(f"rank_{self.unique_id}").decode("utf-8"))
             # Get updated world_size
-            global_world_size = int(store.get("world_size").decode("utf-8"))
+            self.world_info.global_world_size = int(store.get("world_size").decode("utf-8"))
             self.mesh_count = int(store.get("mesh_count").decode("utf-8"))
             self.prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", store)
-            pg = dist.ProcessGroupGloo(self.prefix_store, global_rank, global_world_size, TCPSTORE_TIMEOUT)
+            pg = dist.ProcessGroupGloo(self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT)
         else:
             # TODO: Could be in "reinit" status
             raise RuntimeError(f"Unknown status {status}")
 
         # Setting instance variables
         self.global_store = store
-        self.global_rank = global_rank
         self.leaving = False
         return pg
 

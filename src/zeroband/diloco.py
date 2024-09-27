@@ -46,11 +46,11 @@ class Diloco:
         config: DilocoConfig,
         model: nn.Module,
         fsdp_sharding_strategy: ShardingStrategy,
-        global_pg: dist.ProcessGroup,
+        elastic_device_mesh: ElasticDeviceMesh,
     ):
         self.config = config
         self.fsdp_sharding_strategy = fsdp_sharding_strategy
-        self.global_pg = global_pg
+        self.elastic_device_mesh = elastic_device_mesh
 
         self._logger = get_logger()
         self.world_info = get_world_info()

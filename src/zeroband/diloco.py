@@ -107,7 +107,7 @@ class Diloco:
 
         self._logger.debug("sync inner model")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            param.data.copy_(param_offloaded.data.to(param.device))  # todo: use copy_ here
+            param.data.copy_(param_offloaded.data)  # todo: use copy_ here
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """

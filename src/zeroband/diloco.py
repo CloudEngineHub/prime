@@ -102,6 +102,9 @@ class Diloco:
         """
         Offload the model parameters to cpu
         """
+        # The change here makes processes which are part of the same FSDP replica group (which are assumed to be on the same node with the same /dev/shm) use the same underlying storage for the offloaded_param.
+        # All the processes use the same shared memory file to create a storage for each parameter. Only rank 0 will do the copy.
+        # A barrier is added to ensure that after the function completes, the parameters are all offloaded. Otherwise, the non 0 ranks might access uninitialized memory.
         offloaded_params = []
         os.makedirs(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", exist_ok=True)
 

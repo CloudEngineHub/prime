@@ -6,7 +6,6 @@ from torch import nn
 from zeroband.utils import get_module_signature
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
-from zeroband.comms import ElasticDeviceMesh
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -48,11 +47,11 @@ class Diloco:
         config: DilocoConfig,
         model: nn.Module,
         fsdp_sharding_strategy: ShardingStrategy,
-        elastic_device_mesh: ElasticDeviceMesh,
+        global_pg: dist.ProcessGroup,
     ):
         self.config = config
         self.fsdp_sharding_strategy = fsdp_sharding_strategy
-        self.elastic_device_mesh = elastic_device_mesh
+        self.global_pg = global_pg
 
         self._logger = get_logger()
         self.world_info = get_world_info()
@@ -75,19 +74,13 @@ class Diloco:
         Sync the pseudo gradient from the local process group to the global process group
         """
         self._logger.debug("sync pseudo gradient")
-        works = []
         # TODO: This assumes all params require grad, which is used by the offload
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG
-            param_offloaded.grad = param_offloaded.grad / self.elastic_device_mesh.global_pg.size()
-            work = dist.all_reduce(
-                param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.elastic_device_mesh.global_pg, async_op=True
-            )
-            works.append(work)
-        for work in works:
-            work.wait()
+            param_offloaded.grad = param_offloaded.grad / self.global_pg.size()
+            dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.global_pg)
 
     def sync_inner_model(self, model: nn.Module):
         """
@@ -117,7 +110,7 @@ class Diloco:
                 )
                 offloaded_param = torch.tensor(storage, dtype=param.dtype, device="cpu")
                 offloaded_param.as_strided_(size=param.data.size(), stride=param.data.stride())
-                if self.world_info.rank == 0:
+                if self.world_info.local_rank == 0:
                     # TODO: Can we async or split the copy among gpus probs overkill?
                     offloaded_param.copy_(param.data)
                 offloaded_param.requires_grad = False  # TODO: check if we need to set this to True

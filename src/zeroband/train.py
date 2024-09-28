@@ -141,7 +141,7 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,

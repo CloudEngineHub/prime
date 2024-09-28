@@ -1,6 +1,8 @@
 name_model = "debugmodel"
 project = "/tmp/debug"
-metric_logger_type = "dummy"
+
+[metric_logger]
+type = "dummy"
 
 [train]
 micro_bs = 8

@@ -2,11 +2,12 @@ name_model = "debugmodel"
 project = "/tmp/debug"
 
 [metric_logger]
-type = "dummy"
+type = "http"
+base_url = "https://protocol-api.primeintellect.ai"
 
 [train]
 micro_bs = 8
-sharding_strategy = "SHARD_GRAD_OP"
+sharding_strategy = "FULL_SHARD"
 
 [optim]
 batch_size = 16
@@ -15,4 +16,7 @@ total_steps = 4
 
 [data]
 fake = true
+
+[diloco]
+inner_steps = 2
 

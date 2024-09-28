@@ -1,5 +1,10 @@
 name_model = "150M"
 project = "debug_150m_zero_band"
+run_id = "2c774d7c830b49e7855f4f9be6ea4d09"
+
+[metric_logger]
+type = "dummy"
+base_url = "https://protocol-api.primeintellect.ai"
 
 [train]
 micro_bs = 16 # change this base on the gpu

@@ -1,6 +1,7 @@
 import os
 from contextlib import nullcontext
 from typing import Literal
+import time
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
@@ -21,7 +22,7 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
 
 from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
-from zeroband.utils.monitor import WandbMonitor, DummyMonitor
+from zeroband.utils.monitor import WandbMonitor, DummyMonitor, HttpMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
@@ -53,19 +54,26 @@ class TrainConfig(BaseConfig):
     log_model_hash: bool = False
 
 
+class MetricLogger(BaseConfig):
+    type: Literal["wandb", "dummy", "http"] = "http"
+    base_url: str | None = None
+    auth_token: str | None = None
+
+
 class Config(BaseConfig):
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
     type_model: Literal["llama2", "llama3"] = "llama2"
 
     project: str = "zeroband"
-    metric_logger_type: Literal["wandb", "dummy"] = "wandb"
+    run_id: str | None = None
 
     # sub config
     diloco: DilocoConfig | None = None
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
+    metric_logger: MetricLogger
 
 
 def train(config: Config):
@@ -153,7 +161,12 @@ def train(config: Config):
     model.train()
 
     if world_info.rank == 0:
-        logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
+        if config.metric_logger.type == "wandb":
+            logger_cls = WandbMonitor
+        elif config.metric_logger.type == "http":
+            logger_cls = HttpMonitor
+        else:
+            logger_cls = DummyMonitor
         metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
 
     train_dataloader_iterator = iter(train_dataloader)
@@ -209,6 +222,7 @@ def train(config: Config):
                 "inner_lr": inner_lr,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": real_step * config.optim.batch_size * config.data.seq_length,
+                "time": time.time(),
             }
             log = f"step: {real_step}, loss: {loss_batch.item():.4f}"
 

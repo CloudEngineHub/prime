@@ -76,7 +76,17 @@ class OptimizerWrapper(Stateful):
 
 
 class CkptManager:
-    """Its name CkptManager because I (sami) always misstyped chekcpoint."""
+    """Its name CkptManager because I (sami) always misstyped chekcpoint.
+
+    Checkpoint are saved in a folder with the following structure:
+    ckpt_path/
+        step_0/
+            _0_0.pt
+            _1_0.pt
+            ...
+        step_1/
+            ...
+    """
 
     def __init__(
         self,
@@ -114,6 +124,7 @@ class CkptManager:
 
         time_start = time.perf_counter()
 
+        ckpt_path = self._get_ckpt_folder_name(ckpt_path, self.training_progress.step)
         catch_warning = self._logger.getEffectiveLevel() <= logging.INFO
         # pytorch has an annoying warning when saving the optimizer state https://github.com/pytorch/pytorch/issues/136907
         # we can ignore it if we are not logging in DEBUG mode
@@ -138,9 +149,12 @@ class CkptManager:
         Each rank will load the right shard of the model and optimizer.
         All rank will load the global states (scheduler, step, total_tokens, dataloader).
 
+        `resume_ckpt_path` should point to a specific step and not to the base ckpt folder. Example: `ckpt_path/step_100`
+
         Loading is done inplace
         """
         time_start = time.perf_counter()
+
         self.states = dcp.load(self.states, process_group=self.process_group, checkpoint_id=resume_ckpt_path)
 
         rank = get_world_info().local_rank  # todo check after on/off ramping pr which rank is good here
@@ -152,3 +166,10 @@ class CkptManager:
             self.dataloader.load_state_dict(rank_state_dict["data_loader"])
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+    @staticmethod
+    def _get_ckpt_folder_name(ckpt_path: str, step: int) -> str:
+        """
+        The ckpt folder can contains multiple ckpt with different step name. This function return the sub directory name for the ckpt with the given step.
+        """
+        return os.path.join(ckpt_path, f"step_{step}")

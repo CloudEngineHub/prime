@@ -1,5 +1,5 @@
-import os
 import shutil
+import os
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
@@ -14,6 +14,9 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
+
+
+SHARED_MEMORY_PATH = "/dev/shm/zeroband"
 
 
 class Diloco:
@@ -99,12 +102,12 @@ class Diloco:
         # All the processes use the same shared memory file to create a storage for each parameter. Only rank 0 will do the copy.
         # A barrier is added to ensure that after the function completes, the parameters are all offloaded. Otherwise, the non 0 ranks might access uninitialized memory.
         offloaded_params = []
-        os.makedirs(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", exist_ok=True)
+        os.makedirs(f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}", exist_ok=True)
 
         for param_name, param in model.named_parameters():
             if param.requires_grad:
                 storage = torch.UntypedStorage.from_file(
-                    f"/dev/shm/zeroband/{self.world_info.global_unique_id}/{param_name}",
+                    f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}/{param_name}",
                     True,
                     param.data.untyped_storage().size(),
                 )
@@ -136,4 +139,4 @@ class Diloco:
             self._logger.debug("Post meow diloco step %s", get_module_signature(model))
 
     def __del__(self):
-        shutil.rmtree(f"/dev/shm/zeroband/{self.world_info.global_unique_id}", ignore_errors=True)
+        shutil.rmtree(f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}", ignore_errors=True)

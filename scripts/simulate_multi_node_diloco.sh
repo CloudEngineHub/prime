@@ -59,7 +59,7 @@ export GLOBAL_WORLD_SIZE=$N
 for i in $(seq 0 $(($N - 1 )))
 do
     > logs/log$i
-    TORCH_UNIQUE_ID=$i GLOBAL_RANK=$i CUDA_VISIBLE_DEVICES=$(get_cuda_devices $NUM_GPU $i) uv run torchrun --nproc_per_node=$NUM_GPU --node-rank 0 --rdzv-endpoint localhost:$((10001 + $i)) --nnodes=1  $@  > logs/log$i 2>&1 &
+    GLOBAL_UNIQUE_ID=$i GLOBAL_RANK=$i CUDA_VISIBLE_DEVICES=$(get_cuda_devices $NUM_GPU $i) uv run torchrun --nproc_per_node=$NUM_GPU --node-rank 0 --rdzv-endpoint localhost:$((10001 + $i)) --nnodes=1  $@  > logs/log$i 2>&1 &
     child_pids+=($!)
 done
 

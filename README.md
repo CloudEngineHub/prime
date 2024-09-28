@@ -78,8 +78,8 @@ uv run pytest
 ## Environment variables
 | Environment Variable  | Description                                      | Default Value |
 |-----------------------|--------------------------------------------------|---------------|
-| `GLOBAL_UNIQUE_ID`    | Unique identifier worker in global store.        | `""` (empty string) |
-| `GLOBAL_ADDR`         | IP Address of the global store                   | `""` (empty string) |
-| `GLOBAL_PORT`         | Port number of the global store.                 | `-1` |
+| `GLOBAL_UNIQUE_ID`    | Unique identifier worker in global store.        | `None`  |
+| `GLOBAL_ADDR`         | IP Address of the global store                   | `None`  |
+| `GLOBAL_PORT`         | Port number of the global store.                 | `None` |
 | `GLOBAL_WORLD_SIZE`   | The size of the global process group.            | `1` |
 | `GLOBAL_RANK`         | Rank of the process in the global process group. | `0` |

@@ -92,6 +92,7 @@ def train(config: Config):
         num_workers=config.data.num_workers,
         fake_data=config.data.fake,
     )
+
     model, model_config = get_model(
         config.name_model,
         config.type_model,

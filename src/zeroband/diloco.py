@@ -1,22 +1,15 @@
-import shutil
-import os
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
-from zeroband.utils import get_module_signature
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
-
-
-SHARED_MEMORY_PATH = "/dev/shm/zeroband"
 
 
 class Diloco:
@@ -64,26 +57,25 @@ class Diloco:
 
         self._init_offloaded_optimizer(model=model)
 
-    def _init_offloaded_optimizer(self, model: nn.Module):
-        with FSDP.summon_full_params(model):
-            self.param_list_cpu = self.get_offloaded_param(model)
-            self.outer_optimizer = torch.optim.SGD(
-                self.param_list_cpu, lr=self.config.outer_lr, momentum=0.9, nesterov=True
-            )
-            self._logger.debug("offload model to cpu")
+    def _init_offloaded_optimizer(self, model):
+        self.param_list_cpu = self.get_offloaded_param(model)
+        self.outer_optimizer = torch.optim.SGD(
+            self.param_list_cpu, lr=self.config.outer_lr, momentum=0.9, nesterov=True
+        )
+        self._logger.debug("offload model to cpu")
 
     def sync_pseudo_gradient(self, model: nn.Module):
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
         self._logger.debug("sync pseudo gradient")
-        # TODO: This assumes all params require grad, which is used by the offload
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / self.global_pg.size()
             dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.global_pg)
+            # todo async here
 
     def sync_inner_model(self, model: nn.Module):
         """
@@ -92,51 +84,29 @@ class Diloco:
 
         self._logger.debug("sync inner model")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            param.data.copy_(param_offloaded.data)
+            param.data.copy_(param_offloaded.data)  # todo: use copy_ here
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """
         Offload the model parameters to cpu
         """
-        # The change here makes processes which are part of the same FSDP replica group (which are assumed to be on the same node with the same /dev/shm) use the same underlying storage for the offloaded_param.
-        # All the processes use the same shared memory file to create a storage for each parameter. Only rank 0 will do the copy.
-        # A barrier is added to ensure that after the function completes, the parameters are all offloaded. Otherwise, the non 0 ranks might access uninitialized memory.
         offloaded_params = []
-        os.makedirs(f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}", exist_ok=True)
 
-        for param_name, param in model.named_parameters():
+        for param in model.parameters():
             if param.requires_grad:
-                storage = torch.UntypedStorage.from_file(
-                    f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}/{param_name}",
-                    True,
-                    param.data.untyped_storage().size(),
-                )
-                offloaded_param = torch.tensor(storage, dtype=param.dtype, device="cpu")
-                offloaded_param.as_strided_(size=param.data.size(), stride=param.data.stride())
-                if self.world_info.local_rank == 0:
-                    # TODO: Can we async or split the copy among gpus probs overkill?
-                    offloaded_param.copy_(param.data)
-                offloaded_param.requires_grad = False  # TODO: check if we need to set this to True
+                offloaded_param = param.data.detach().clone().to("cpu")
+                offloaded_param.requires_grad = True
                 offloaded_params.append(offloaded_param)
 
-        dist.barrier()
         return offloaded_params
 
     def step(self, model: nn.Module):
         """
         Step the optimizer
         """
-        with FSDP.summon_full_params(model):
-            self._logger.debug("Pre diloco step %s", get_module_signature(model))
-            if self.world_info.rank == 0:
-                self.sync_pseudo_gradient(model)
-                if self.outer_optimizer is not None:
-                    self.outer_optimizer.step()
-                    self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
+        self.sync_pseudo_gradient(model)
+        if self.outer_optimizer is not None:
+            self.outer_optimizer.step()
+            self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
-            dist.barrier()
-            self.sync_inner_model(model)
-            self._logger.debug("Post meow diloco step %s", get_module_signature(model))
-
-    def __del__(self):
-        shutil.rmtree(f"{SHARED_MEMORY_PATH}/{self.world_info.global_unique_id}", ignore_errors=True)
+        self.sync_inner_model(model)

@@ -4,6 +4,7 @@ from typing import Any, Generator
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from datasets import load_dataset
 from datasets.distributed import split_dataset_by_node
@@ -79,7 +80,7 @@ def get_dataloader(
 
     data_collator = collate_causal_mask(max_seq_length=seq_length, pad_id=tokenizer.pad_token_id, ignore_index=-100)
 
-    return DataLoader(
+    return StatefulDataLoader(
         train_dataset,
         collate_fn=data_collator,
         batch_size=batch_size,

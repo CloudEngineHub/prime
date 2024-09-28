@@ -26,6 +26,7 @@ from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
+from zeroband.checkpoint import TrainingProgress
 
 
 class DataConfig(BaseConfig):
@@ -53,6 +54,11 @@ class TrainConfig(BaseConfig):
     log_model_hash: bool = False
 
 
+class CkptConfig(BaseConfig):
+    path: str
+    interval: int
+
+
 class Config(BaseConfig):
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
@@ -67,6 +73,9 @@ class Config(BaseConfig):
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
 
+    ckpt: CkptConfig | None = None
+    resume: str | None = None
+
 
 def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
@@ -77,6 +86,11 @@ def train(config: Config):
 
     assert batch_size % config.train.micro_bs == 0
     gradient_accumulation_steps = batch_size // config.train.micro_bs
+
+    if config.ckpt is not None and config.ckpt.interval is not None and config.diloco is not None:
+        assert (
+            config.ckpt.interval % config.diloco.inner_steps == 0
+        ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
 
     tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
@@ -126,10 +140,7 @@ def train(config: Config):
         use_orig_params=True,
         process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
     )
-
-    if config.train.torch_compile:
-        model = torch.compile(model)
-    logger.debug("model compiled and fsdped")
+    logger.debug("model fsdped")
 
     # Setup optimizers
     inner_optimizer = torch.optim.AdamW(
@@ -148,6 +159,26 @@ def train(config: Config):
         num_training_steps=config.optim.total_steps,
     )
 
+    training_progress = TrainingProgress(total_tokens=0, outer_step=0, step=0)
+
+    ckpt_manager = CkptManager(
+        model=model,
+        optimizer=inner_optimizer,
+        scheduler=scheduler,
+        dataloader=train_dataloader,
+        training_progress=training_progress,
+        process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
+    )
+
+    if config.train.torch_compile:
+        # we need to compile AFTER creating the CKPT manager, DON'T ASK ME WHY
+        model = torch.compile(model)
+        logger.debug("model compiled")
+
+    if config.resume is not None:
+        # all is inplace
+        ckpt_manager.load(resume_ckpt_path=config.resume)
+
     model.train()
 
     if world_info.rank == 0:
@@ -156,7 +187,6 @@ def train(config: Config):
 
     train_dataloader_iterator = iter(train_dataloader)
 
-    outer_step = 0
     num_inner_steps = config.diloco.inner_steps if config.diloco is not None else 1
     perf_counter = PerfCounter(window_size=10)
 
@@ -164,9 +194,9 @@ def train(config: Config):
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
-            logger.info(f"outer_step step: {outer_step}")
+            logger.info(f"outer_step step: {training_progress.outer_step}")
 
-        for inner_step in range(num_inner_steps):
+        for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
             for grad_acc_step in range(gradient_accumulation_steps):
@@ -193,22 +223,24 @@ def train(config: Config):
             inner_optimizer.zero_grad()
 
             # logging
-            real_step = outer_step * num_inner_steps + inner_step + 1  # add + 1 because inner_step start at 0
+            training_progress.step += 1
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
             dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
             # syncing loss across all data parallel rank within a nodes
 
-            perf_counter.count_tokens(config.data.seq_length * config.optim.batch_size)
+            new_tokens = config.data.seq_length * config.optim.batch_size
+            perf_counter.count_tokens(new_tokens)
+            training_progress.total_tokens += new_tokens
 
             metrics = {
                 "Loss": loss_batch.item(),
-                "step": real_step,
+                "step": training_progress.step,
                 "inner_lr": inner_lr,
                 "Perplexity": torch.exp(loss_batch).item(),
-                "total_tokens": real_step * config.optim.batch_size * config.data.seq_length,
+                "total_tokens": training_progress.total_tokens,
             }
-            log = f"step: {real_step}, loss: {loss_batch.item():.4f}"
+            log = f"step: {training_progress.step}, loss: {loss_batch.item():.4f}"
 
             tokens_per_second = perf_counter.get_tokens_per_second()
 
@@ -237,9 +269,17 @@ def train(config: Config):
                 with FSDP.summon_full_params(model):
                     logger.debug("Post diloco model: %s", get_module_signature(model))
 
-        outer_step += 1
+        training_progress.outer_step += 1
 
-        if real_step >= config.optim.total_steps:
+        if (
+            config.ckpt is not None
+            and training_progress.step > 0
+            and training_progress.step % config.ckpt.interval == 0
+        ):
+            # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
+            ckpt_manager.save(config.ckpt.path)
+
+        if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.
             # This avoid ending the training in the middle of a the inner loop
             # Since ckpt strategy and all reduce is done at the outer loop level.

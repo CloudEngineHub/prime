@@ -20,7 +20,7 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
+from zeroband.utils import PerfCounter, get_module_signature, get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
@@ -102,7 +102,7 @@ def train(config: Config):
 
     if config.train.log_model_hash:
         # Compute SHA256 hash
-        logger.info(f"Model hash: {get_model_hash(model)}")
+        logger.info(f"Model hash: {get_module_signature(model)}")
 
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")

@@ -97,8 +97,7 @@ class ElasticDeviceMesh:
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
         if self.world_info.global_world_size > 1:
-            if self.world_info.rank == 0:
-                self.global_pg = self._init_global_pg()
+            self.global_pg = self._init_global_pg()
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")
@@ -120,7 +119,7 @@ class ElasticDeviceMesh:
     def _init_global_pg(self) -> dist.Store:
         store = dist.TCPStore(
             host_name=self.world_info.global_addr,
-            port=self.world_info.global_port,
+            port=self.world_info.global_port + self.world_info.rank,
             timeout=TCPSTORE_TIMEOUT,
             is_master=(self.world_info.global_rank == 0),
         )

@@ -70,6 +70,8 @@ class Diloco:
         """
         self._logger.debug("sync pseudo gradient")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+            if param.shape[0] == 0:
+                continue
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG

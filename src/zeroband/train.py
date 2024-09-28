@@ -230,7 +230,13 @@ def train(config: Config):
             logger.info(log)
 
         if config.diloco is not None:
+            if config.train.log_model_hash:
+                with FSDP.summon_full_params(model):
+                    logger.debug("Pre diloco model: %s", get_module_signature(model))
             diloco.step(model)
+            if config.train.log_model_hash:
+                with FSDP.summon_full_params(model):
+                    logger.debug("Post diloco model: %s", get_module_signature(model))
 
         outer_step += 1
 

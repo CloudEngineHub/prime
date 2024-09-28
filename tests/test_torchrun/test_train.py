@@ -81,6 +81,6 @@ def test_multi_gpu_diloco_non_full_shard(strategy):
 def test_ckpt(tmp_path: Path):
     ckpt_path = "outputs"  # for some reason tmp_path is not working
     os.makedirs(ckpt_path, exist_ok=True)
-    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--ckpt.path", str(ckpt_path), "--ckpt.interval", "10"])
-    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--resume", str(ckpt_path)])
+    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--ckpt.path", f"{ckpt_path}/", "--ckpt.interval", "10"])
+    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--resume", f"{ckpt_path}/step_10"])
     shutil.rmtree(ckpt_path)

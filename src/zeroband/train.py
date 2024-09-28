@@ -231,7 +231,13 @@ def train(config: Config):
 
             new_tokens = config.data.seq_length * config.optim.batch_size
             perf_counter.count_tokens(new_tokens)
-            training_progress.total_tokens += new_tokens
+
+            if config.diloco is not None:
+                training_progress.total_tokens += new_tokens
+            else:
+                # we count the total tokens with respect to all diloco workers
+                # might need to tweak this as some worker might fail to join the all reduce later
+                training_progress.total_tokens += new_tokens * elastic_device_mesh.global_pg.size()
 
             metrics = {
                 "Loss": loss_batch.item(),

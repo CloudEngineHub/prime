@@ -22,7 +22,7 @@ def test_diloco_all_reduce(world_size, random_available_port, dist_environment):
     """
 
     def all_reduce(rank: int, world_size: int):
-        with dist_environment(random_available_port, local_rank=rank, world_size=world_size):
+        with dist_environment(random_available_port, rank=rank, world_size=world_size, global_unique_id=str(rank)):
             diloco_config = DilocoConfig(inner_steps=10)
 
             model = torch.nn.Linear(10, 10)

@@ -92,12 +92,11 @@ def train(config: Config):
         num_workers=config.data.num_workers,
         fake_data=config.data.fake,
     )
+
     model, model_config = get_model(
         config.name_model,
         config.type_model,
-        vocab_size=tokenizer.vocab_size
-        if config.name_model != "debugmodel" or not config.data.fake
-        else TEST_VOCAB_SIZE,
+        vocab_size=tokenizer.vocab_size if config.name_model != "debugmodel" or not config.data.fake else TEST_VOCAB_SIZE,
     )
 
     if config.train.log_model_hash:

@@ -18,9 +18,9 @@ class WorldInfo:
         self.local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
         self.nnodes = self.world_size // self.local_world_size
 
-        self.global_unique_id = os.environ.get("GLOBAL_UNIQUE_ID", "")
-        self.global_addr = os.environ.get("GLOBAL_ADDR", "")
-        self.global_port = int(os.environ.get("GLOBAL_PORT", -1))
+        self.global_unique_id = os.environ.get("GLOBAL_UNIQUE_ID", None)
+        self.global_addr = os.environ.get("GLOBAL_ADDR", None)
+        self.global_port = int(os.environ.get("GLOBAL_PORT")) if "GLOBAL_PORT" in os.environ else None
         self.global_world_size = int(os.environ.get("GLOBAL_WORLD_SIZE", 1))
         self.global_rank = int(os.environ.get("GLOBAL_RANK", 0))
 

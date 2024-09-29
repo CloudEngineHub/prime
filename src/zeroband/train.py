@@ -196,7 +196,6 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
-    d = 0
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -291,9 +290,7 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            if d == 0:
-                ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
-                d += 1
+            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.

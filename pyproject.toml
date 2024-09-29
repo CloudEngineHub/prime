@@ -12,7 +12,8 @@ dependencies = [
     "datasets>=3.0.0",
     "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@e529c9c",
     "einops",
-    "torchdata>=0.8.0"
+    "torchdata>=0.8.0",
+    "fsspec[gcs]>=2024.3.1",
 ]
 
 [project.optional-dependencies]

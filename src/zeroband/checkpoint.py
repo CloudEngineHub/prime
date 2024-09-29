@@ -28,9 +28,6 @@ from zeroband.utils.world_info import get_world_info
 ## code inspired by torchtitan https://github.com/pytorch/torchtitan/blob/main/torchtitan/checkpoint.py
 
 
-GLOBAL_STATE_FILE = "global_state_dict.pt"
-
-
 @dataclass
 class TrainingProgress(Stateful):
     total_tokens: int

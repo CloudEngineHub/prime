@@ -1,6 +1,5 @@
 import os
 from contextlib import nullcontext
-import time
 from typing import Literal
 
 import torch
@@ -172,6 +171,8 @@ def train(config: Config):
         scheduler=scheduler,
         dataloader=train_dataloader,
         training_progress=training_progress,
+        diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
+        diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
         process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
     )
 
@@ -270,8 +271,6 @@ def train(config: Config):
                 metric_logger.log(metrics)
 
             logger.info(log)
-
-            time.sleep(2)
 
         if config.diloco is not None:
             if config.train.log_model_hash:

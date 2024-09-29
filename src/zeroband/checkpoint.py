@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import multiprocessing
 import os
 import time
 from typing import Any
@@ -116,7 +117,9 @@ class CkptManager:
         self.process_group = process_group
         self._logger = get_logger()
 
-    def save(self, ckpt_path: str, remote_ckpt_path: str | None = None) -> None:
+        self.async_save_process: list[multiprocessing.Process] = []
+
+    def save(self, ckpt_path: str, remote_ckpt_path: str | None) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -145,8 +148,35 @@ class CkptManager:
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         if remote_ckpt_path is not None:
-            remote_ckpt_path = os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
-            rsync_fsspec(ckpt_path, remote_ckpt_path)
+            self._async_save_remote(ckpt_path, remote_ckpt_path)
+
+    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str):
+        """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
+        specific libraries (e.g. s3fs)
+        """
+
+        def rsync():
+            time_start = time.perf_counter()
+            self._logger.info(f"start pushing {ckpt_path} to {remote_ckpt_path} asynchronously")
+            rsync_fsspec(ckpt_path, destination=remote_ckpt_path)
+            self._logger.info(
+                f"finish pushing {ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
+            )
+
+        processes = multiprocessing.Process(target=rsync, daemon=True)
+        processes.start()
+
+        self.async_save_process.append(processes)
+
+    def wait_async_save_process(self):
+        """
+        wait for all async save process to finish
+        """
+        for process in self.async_save_process:
+            process.join()
+
+    def _del__(self):
+        self.wait_async_save_process()
 
     def load(self, resume_ckpt_path: str) -> None:
         """

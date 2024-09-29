@@ -95,6 +95,8 @@ class CkptManager:
         dataloader: StatefulDataLoader,
         training_progress: TrainingProgress,
         process_group: ProcessGroup | None,
+        diloco_offloaded_cpu_list: list[nn.Parameter] | None,
+        diloco_offloaded_optimizer: Optimizer | None,
     ):
         self.model = ModelWrapper(model)
         self.optimizer = OptimizerWrapper(model, optimizer)
@@ -110,6 +112,17 @@ class CkptManager:
             # "dataloader": self.dataloader, # ignoring dataloader for now as each rank has its own dataloader
             "training_progress": self.training_progress,
         }
+
+        assert (diloco_offloaded_cpu_list is None) == (
+            diloco_offloaded_optimizer is None
+        ), "diloco_offloaded_model and diloco_offloaded_optimizer must be both None or both have values"
+
+        if diloco_offloaded_optimizer is not None:
+            self.diloco_offloaded_optimizer = OptimizerWrapper(model, optim=diloco_offloaded_optimizer)
+            self.diloco_offloaded_cpu_list = diloco_offloaded_cpu_list
+            # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
+            # main reason is that we actually don't a cpu model but just a list of cpu parameters.
+            self.states["diloco_offloaded_optimizer"] = self.diloco_offloaded_optimizer
 
         self.process_group = process_group
         self._logger = get_logger()
@@ -196,5 +209,9 @@ class CkptManager:
             with open(os.path.join(resume_ckpt_path, f"__{rank}_0.pt"), "rb") as f:
                 rank_state_dict = torch.load(f)
             self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+
+        if self.diloco_offloaded_cpu_list is not None:
+            for param_offloaded, param_model in zip(self.diloco_offloaded_cpu_list, self.model.model.parameters()):
+                param_offloaded.data.copy_(param_model.data)
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")

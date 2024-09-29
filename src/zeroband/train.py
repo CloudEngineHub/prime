@@ -58,6 +58,8 @@ class CkptConfig(BaseConfig):
     path: str
     interval: int
 
+    remote_path: str | None = None  # could be a s3 path
+
 
 class Config(BaseConfig):
     # main config
@@ -283,7 +285,7 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path)
+            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.

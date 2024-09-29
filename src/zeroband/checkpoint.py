@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import os
 import time
 from typing import Any
+from fsspec.generic import rsync as rsync_fsspec
 import torch
 from torch import nn
 from torch.optim import Optimizer
@@ -115,7 +116,7 @@ class CkptManager:
         self.process_group = process_group
         self._logger = get_logger()
 
-    def save(self, ckpt_path: str) -> None:
+    def save(self, ckpt_path: str, remote_ckpt_path: str | None = None) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -142,6 +143,10 @@ class CkptManager:
                 torch.save({"data_loader": self.dataloader.state_dict()}, f)
 
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+        if remote_ckpt_path is not None:
+            remote_ckpt_path = os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
+            rsync_fsspec(ckpt_path, remote_ckpt_path)
 
     def load(self, resume_ckpt_path: str) -> None:
         """

@@ -55,7 +55,9 @@ class TrainConfig(BaseConfig):
 
 
 class MetricLogger(BaseConfig):
-    type: Literal["wandb", "dummy", "http"] = "http"
+    type: Literal["wandb", "dummy", "http"] = "dummy"
+    batch_size: int = 10
+    # for http monitor
     base_url: str | None = None
     auth_token: str | None = None
 

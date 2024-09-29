@@ -21,10 +21,13 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.batch_size = getattr(config.progress_logger, 'batch_size', 10)
-        self.run_id = config.get('run_id', 'default_run')
+        self.batch_size = getattr(config.metric_logger, 'batch_size', 10)
         self.base_url = config['metric_logger']['base_url']
         self.auth_token = config['metric_logger']['auth_token']
+
+        self.run_id = config.get('run_id', None)
+        if self.run_id is None:
+            raise ValueError("run_id must be set for HttpMonitor")
 
     def _remove_duplicates(self):
         seen = set()
@@ -37,19 +40,19 @@ class HttpMonitor:
         self.data = unique_logs
 
     def log(self, data: dict[str, Any]):
+        import asyncio
+
         # Lowercase the keys in the data dictionary
         lowercased_data = {k.lower(): v for k, v in data.items()}
         self.data.append(lowercased_data)
         if len(self.data) >= self.batch_size:
-            self._remove_duplicates()  # Remove duplicates before sending
-            self._send_batch()
+            # do this in a separate thread to not affect training loop
+            asyncio.create_task(self._send_batch())
 
-    def _send_batch(self):
-        import requests
-        # Remove duplicates before sending
+    async def _send_batch(self):
+        import aiohttp
+
         self._remove_duplicates()
-        
-        # Send batch of logs to API endpoint
         batch = self.data[:self.batch_size]
         headers = {
             "Content-Type": "application/json",
@@ -59,13 +62,15 @@ class HttpMonitor:
             "logs": batch
         }
         api = f"{self.base_url}/training_runs/{self.run_id}/logs"
-        try:
-            response = requests.post(api, json=payload, headers=headers)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            logger.debug(f"Failed to send batch of logs to http monitor: {e}")
-            return False
-        
+
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(api, json=payload, headers=headers) as response:
+                    await response.raise_for_status()
+            except aiohttp.ClientError as e:
+                logger.debug(f"Failed to send batch of logs to http monitor: {e}")
+                return False
+
         self.data = self.data[self.batch_size:]
         return True
 
@@ -84,9 +89,6 @@ class HttpMonitor:
             return False
 
     def finish(self):
-        # Remove duplicates before sending any remaining logs
-        self._remove_duplicates()
-        
         # Send any remaining logs
         while self.data:
             self._send_batch()

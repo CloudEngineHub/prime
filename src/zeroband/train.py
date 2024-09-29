@@ -1,5 +1,6 @@
 import os
 from contextlib import nullcontext
+import time
 from typing import Literal
 
 import torch
@@ -193,6 +194,7 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
+    d = 0
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -268,6 +270,8 @@ def train(config: Config):
 
             logger.info(log)
 
+            time.sleep(2)
+
         if config.diloco is not None:
             if config.train.log_model_hash:
                 with FSDP.summon_full_params(model):
@@ -285,7 +289,9 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
+            if d == 0:
+                ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
+                d += 1
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.
@@ -295,6 +301,8 @@ def train(config: Config):
 
     if world_info.rank == 0:
         metric_logger.finish()
+
+    ckpt_manager.wait_async_save_process()
 
 
 if __name__ == "__main__":

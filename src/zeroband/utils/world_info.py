@@ -27,6 +27,10 @@ class WorldInfo:
     def __repr__(self):
         return f"WorldInfo(world_size={self.world_size}, rank={self.rank}, local_rank={self.local_rank}, local_world_size={self.local_world_size}, nnodes={self.nnodes}, global_unique_id={self.global_unique_id}, global_addr={self.global_addr}, global_port={self.global_port}, global_world_size={self.global_world_size}, global_rank={self.global_rank})"
 
+    @property
+    def diloco_rank(self):
+        return self.rank // self.local_world_size
+
 
 def get_world_info() -> WorldInfo:
     """

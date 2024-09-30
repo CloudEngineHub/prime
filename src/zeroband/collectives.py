@@ -1,6 +1,35 @@
-from typing import Optional
+from enum import Enum
+from typing import Callable, Optional, TypeAlias
 import torch
 import torch.distributed as dist
+
+AllReduceFunc: TypeAlias = Callable[
+    [torch.Tensor, dist.ReduceOp, Optional[dist.ProcessGroup], Optional[torch.dtype]], None
+]
+
+
+def gloo_all_reduce(
+    tensor: torch.Tensor,
+    op: dist.ReduceOp = dist.ReduceOp.SUM,
+    group: Optional[dist.ProcessGroup] = None,
+    transfer_dtype: Optional[torch.dtype] = None,
+) -> None:
+    """Wrap gloo all reduce"""
+    if transfer_dtype is None:
+        transfer_dtype = tensor.dtype
+    if group is None:
+        group = dist.distributed_c10d._get_default_group()
+    if op not in [dist.ReduceOp.SUM, dist.ReduceOp.AVG]:
+        raise ValueError(f"Unsupported reduce operation {op}. Only SUM and AVG are supported.")
+
+    # group = cast(dist.ProcessGroup, group) # just type hint stuff for IDE
+    if op == dist.ReduceOp.AVG:
+        # todo check numerical stability of doing post or pre div
+        tensor.div_(group.size())
+
+    tensor = tensor.to(transfer_dtype)  # todo is it no op ?
+
+    dist.all_reduce(tensor, op, group=group)
 
 
 def ring_allreduce(
@@ -23,6 +52,8 @@ def ring_allreduce(
 
     world_size = group.size()
     rank = group.rank()
+
+    assert tensor.size(0) % world_size == 0, "Tensor size must be divisible by world size"
 
     # Divide the tensor into chunks
     chunks = tensor.chunk(world_size)
@@ -69,3 +100,14 @@ def ring_allreduce(
 
         # Update the corresponding chunk
         chunks[recv_chunk].copy_(recv_buffer)
+
+
+class AllReduceBackend(Enum):
+    GLOO = "gloo"
+    CUSTOM = "custom"
+
+
+ALL_REDUCE_FN: dict[AllReduceBackend, AllReduceFunc] = {
+    AllReduceBackend.GLOO: gloo_all_reduce,
+    AllReduceBackend.CUSTOM: ring_allreduce,
+}

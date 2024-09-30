@@ -57,6 +57,8 @@ def ring_allreduce(
     world_size = group.size()
     rank = group.rank()
 
+    assert tensor.size(0) % world_size == 0, "Tensor size must be divisible by world size"
+
     # Divide the tensor into chunks
     chunks = tensor.chunk(world_size)
 

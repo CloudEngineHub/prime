@@ -46,7 +46,7 @@ def random_available_port():
 def dist_environment() -> callable:
     @contextmanager
     def dist_environment(
-        random_available_port, rank=0, local_rank=0, world_size=1, local_world_size=1, global_unique_id=""
+        random_available_port, backend=None, rank=0, local_rank=0, world_size=1, local_world_size=1, global_unique_id=""
     ):
         with mock.patch.dict(
             os.environ,
@@ -62,7 +62,7 @@ def dist_environment() -> callable:
             },
         ):
             try:
-                init_process_group()
+                init_process_group(backend=backend)
                 torch.cuda.set_device(local_rank)
                 yield
             finally:

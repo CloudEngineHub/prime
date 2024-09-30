@@ -29,7 +29,7 @@ class WorldInfo:
 
     @property
     def diloco_rank(self):
-        return self.rank // self.local_world_size
+        return self.global_rank
 
 
 def get_world_info() -> WorldInfo:

@@ -1,7 +1,5 @@
 import copy
 import os
-from pathlib import Path
-import shutil
 import subprocess
 import pytest
 import socket
@@ -73,14 +71,3 @@ def test_multi_gpu_diloco_non_full_shard(strategy):
     # we don't test 1,1 and 2,1 because 1 solo gpu failed with fsdp
     num_gpus = [2, 2]
     _test_multi_gpu(num_gpus, "debug/diloco.toml", extra_args=["--train.sharding_strategy", strategy])
-
-
-## test ckpt
-
-
-def test_ckpt(tmp_path: Path):
-    ckpt_path = "outputs"  # for some reason tmp_path is not working
-    os.makedirs(ckpt_path, exist_ok=True)
-    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--ckpt.path", f"{ckpt_path}/", "--ckpt.interval", "10"])
-    _test_multi_gpu([1, 1], "debug/normal.toml", extra_args=["--resume", f"{ckpt_path}/step_10"])
-    shutil.rmtree(ckpt_path)

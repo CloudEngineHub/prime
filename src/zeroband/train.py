@@ -1,6 +1,7 @@
 import os
 from contextlib import nullcontext
 from typing import Literal
+import time
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
@@ -201,6 +202,7 @@ def train(config: Config):
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
+        time_start_outer = time.perf_counter()
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
@@ -289,6 +291,16 @@ def train(config: Config):
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
             ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
+
+        if config.diloco:
+            tokens_per_second = (
+                config.optim.batch_size
+                * config.diloco.inner_steps
+                * config.data.seq_length
+                / (time.perf_counter() - time_start_outer)
+            )
+            mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
+            logger.info(f"effective mfu: {mfu}")
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.

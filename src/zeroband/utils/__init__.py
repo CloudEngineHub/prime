@@ -90,7 +90,7 @@ class PerfCounter:
     def get_tokens_per_second(self) -> float | None:
         if len(self.tokens) < 2:
             return None
-        return sum(self.tokens) / (self.times[-1] - self.times[0])
+        return sum(self.tokens[1:]) / (self.times[-1] - self.times[0])
 
 
 TENSOR_SIG_SAMPLE_SIZE = 100

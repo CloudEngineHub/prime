@@ -1,3 +1,4 @@
+import time
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
@@ -106,7 +107,10 @@ class Diloco:
         """
         Step the optimizer
         """
+        time_start = time.perf_counter()
         self.sync_pseudo_gradient(model)
+        self._logger.info(f"all reduce pseudo gradient in: {time.perf_counter() - time_start} seconds")
+
         if self.outer_optimizer is not None:
             self.outer_optimizer.step()
             self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this

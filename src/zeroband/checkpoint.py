@@ -207,14 +207,14 @@ class CkptManager:
         """
         time_start = time.perf_counter()
 
-        self.states = dcp.load(self.states, process_group=self.process_group, checkpoint_id=resume_ckpt_path)
+        self.states = dcp.load(self.states, checkpoint_id=resume_ckpt_path)
 
         world_info = get_world_info()
 
         self._logger.debug(msg=f"diloco_states {self.diloco_states}")
         if self.diloco_states:
             resume_ckpt_path_diloco = os.path.join(resume_ckpt_path, f"diloco_{world_info.diloco_rank}")
-            dcp.load(self.diloco_states, process_group=self.process_group, checkpoint_id=resume_ckpt_path_diloco)
+            dcp.load(self.diloco_states, checkpoint_id=resume_ckpt_path_diloco)
 
         self._logger.debug(msg=f"postdiloco_states {self.diloco_states}")
 

@@ -1,7 +1,7 @@
 name_model = "150M"
 project = "debug_150m_zero_band"
 
-[metric_logger]
+[monitor]
 type = "dummy"
 
 [train]

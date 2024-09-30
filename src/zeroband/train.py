@@ -54,7 +54,7 @@ class TrainConfig(BaseConfig):
     log_model_hash: bool = False
 
 
-class MetricLogger(BaseConfig):
+class MonitorConfig(BaseConfig):
     type: Literal["wandb", "dummy", "http"] = "dummy"
     batch_size: int = 10
     # for http monitor
@@ -75,7 +75,7 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
-    metric_logger: MetricLogger
+    monitor: MonitorConfig
 
 
 def train(config: Config):
@@ -163,13 +163,14 @@ def train(config: Config):
     model.train()
 
     if world_info.rank == 0:
-        if config.metric_logger.type == "wandb":
-            logger_cls = WandbMonitor
-        elif config.metric_logger.type == "http":
-            logger_cls = HttpMonitor
+        if config.monitor.type == "wandb":
+            monitor_cls = WandbMonitor
+        elif config.monitor.type == "http":
+            monitor_cls = HttpMonitor
         else:
-            logger_cls = DummyMonitor
-        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
+            monitor_cls = DummyMonitor
+        monitor = monitor_cls(project=config.project, config=config.model_dump(), resume=False)
+    monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -183,6 +184,7 @@ def train(config: Config):
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {outer_step}")
 
+        monitor.set_stage("inner_loop")
         for inner_step in range(num_inner_steps):
             loss_batch = 0
 
@@ -242,11 +244,12 @@ def train(config: Config):
                 log += f", diloco_peers: {metrics['num_peers']}"
 
             if world_info.rank == 0:
-                metric_logger.log(metrics)
+                monitor.log(metrics)
 
             logger.info(log)
 
         if config.diloco is not None:
+            monitor.set_stage("outer_loop")
             diloco.step(model)
 
         outer_step += 1
@@ -258,7 +261,8 @@ def train(config: Config):
             break
 
     if world_info.rank == 0:
-        metric_logger.finish()
+        monitor.set_stage("finishing")
+        monitor.finish()
 
 
 if __name__ == "__main__":

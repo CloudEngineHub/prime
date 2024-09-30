@@ -1,7 +1,7 @@
 name_model = "debugmodel"
 project = "/tmp/debug"
 
-[metric_logger]
+[monitor]
 type = "dummy"
 
 [train]

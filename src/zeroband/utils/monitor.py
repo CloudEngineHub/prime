@@ -11,6 +11,8 @@ class Monitor(Protocol):
 
     def log(self, metrics: dict[str, Any]): ...
 
+    def set_stage(self, stage: str): ...
+
     def finish(self): ...
 
 
@@ -21,9 +23,9 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.batch_size = getattr(config.metric_logger, 'batch_size', 10)
-        self.base_url = config['metric_logger']['base_url']
-        self.auth_token = config['metric_logger']['auth_token']
+        self.batch_size = config['monitor']['batch_size'] or 10
+        self.base_url = config['monitor']['base_url']
+        self.auth_token = config['monitor']['auth_token']
 
         self.run_id = config.get('run_id', None)
         if self.run_id is None:
@@ -39,13 +41,25 @@ class HttpMonitor:
                 seen.add(log_tuple)
         self.data = unique_logs
 
+    def set_stage(self, stage: str):
+        import time
+        # add a new log entry with the stage name
+        self.data.append({
+            "stage": stage,
+            "time": time.time()
+        })
+        self._handle_send_batch(flush=True) # it's useful to have the most up-to-date stage broadcasted
+    
     def log(self, data: dict[str, Any]):
-        import asyncio
-
         # Lowercase the keys in the data dictionary
         lowercased_data = {k.lower(): v for k, v in data.items()}
         self.data.append(lowercased_data)
-        if len(self.data) >= self.batch_size:
+
+        self._handle_send_batch()
+
+    def _handle_send_batch(self, flush: bool = False):
+        if len(self.data) >= self.batch_size or flush:
+            import asyncio
             # do this in a separate thread to not affect training loop
             asyncio.create_task(self._send_batch())
 
@@ -63,13 +77,18 @@ class HttpMonitor:
         }
         api = f"{self.base_url}/training_runs/{self.run_id}/logs"
 
-        async with aiohttp.ClientSession() as session:
-            try:
+        try:
+            async with aiohttp.ClientSession() as session:
                 async with session.post(api, json=payload, headers=headers) as response:
-                    await response.raise_for_status()
-            except aiohttp.ClientError as e:
-                logger.debug(f"Failed to send batch of logs to http monitor: {e}")
-                return False
+                    if response is not None:
+                        await response.raise_for_status()
+                    else:
+                        logger.error("Received None response from server")
+                        pass
+
+        except Exception as e:
+            logger.error(f"Error sending batch to server: {str(e)}")
+            pass
 
         self.data = self.data[self.batch_size:]
         return True
@@ -112,6 +131,10 @@ class WandbMonitor:
 
         wandb.log(metrics)
 
+    def set_stage(self, stage: str):
+        # no-op
+        pass
+
     def finish(self):
         import wandb
 
@@ -128,6 +151,10 @@ class DummyMonitor:
 
     def log(self, metrics: dict[str, Any]):
         self.data.append(metrics)
+
+    def set_stage(self, stage: str):
+        # no-op
+        pass
 
     def finish(self):
         with open(self.project, "wb") as f:

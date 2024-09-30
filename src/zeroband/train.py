@@ -116,6 +116,7 @@ def train(config: Config):
         vocab_size=tokenizer.vocab_size
         if config.name_model != "debugmodel" or not config.data.fake
         else TEST_VOCAB_SIZE,
+        seq_length=config.data.seq_length,
     )
 
     if config.train.log_model_hash:

@@ -15,7 +15,7 @@ def test_ring_allreduce(world_size: int, op: dist.ReduceOp, random_available_por
             world_size = dist.get_world_size()
 
             # Create a sample tensor
-            tensor = torch.randn(world_size - 1, world_size, dtype=torch.float32)
+            tensor = torch.randn(world_size - 1, world_size * 8, dtype=torch.float32)
             expected = tensor.clone()
 
             dist.all_reduce(expected, op=dist.ReduceOp.SUM)
@@ -40,7 +40,7 @@ def test_ring_allreduce(world_size: int, op: dist.ReduceOp, random_available_por
 def test_all_reduce_func(world_size, random_available_port, dist_environment, all_reduce_backend):
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, "gloo", rank=rank, world_size=world_size):
-            data = (rank + 1) * torch.ones(10, 10)
+            data = (rank + 1) * torch.ones(8, 8)
             ALL_REDUCE_FN[all_reduce_backend](
                 data, op=dist.ReduceOp.SUM, group=dist.distributed_c10d._get_default_group()
             )

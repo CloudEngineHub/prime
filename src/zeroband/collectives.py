@@ -32,6 +32,9 @@ def gloo_all_reduce(
     dist.all_reduce(tensor, op, group=group)
 
 
+BUFFER_COUNT = 2
+
+
 def ring_allreduce(
     tensor: torch.Tensor,
     op: dist.ReduceOp = dist.ReduceOp.SUM,
@@ -55,52 +58,60 @@ def ring_allreduce(
 
     # Divide the tensor into chunks
     flat_tensor = tensor.as_strided((tensor.numel(),), (1,))
-    chunks = flat_tensor.chunk(world_size)
+    chunks = flat_tensor.chunk(world_size * BUFFER_COUNT)
 
-    assert flat_tensor.size(0) % world_size == 0, "Tensor size must be divisible by world size"
+    assert flat_tensor.size(0) % (world_size * BUFFER_COUNT) == 0, "Tensor size must be divisible by world size"
 
     # Temporary buffers for transferring data
-    send_buffer = torch.empty_like(chunks[0], dtype=transfer_dtype)
-    recv_buffer = torch.empty_like(chunks[0], dtype=transfer_dtype)
+    num_buffers = BUFFER_COUNT * world_size
+    send_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
+    recv_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
+    send_work = [None] * BUFFER_COUNT
+    recv_work = [None] * BUFFER_COUNT
 
-    for step in range(world_size - 1):
-        send_rank = (rank + 1) % world_size
-        recv_rank = (rank - 1) % world_size
+    send_rank = (rank + 1) % world_size
+    recv_rank = (rank - 1) % world_size
+    for step in range(1, world_size * BUFFER_COUNT + 1):
+        send_chunk = (rank * BUFFER_COUNT - step) % num_buffers
 
-        send_chunk = (rank - step - 1) % world_size
-        recv_chunk = (rank - step - 2) % world_size
+        if send_work[step % BUFFER_COUNT] is not None:
+            send_work[step % BUFFER_COUNT].wait()
+            recv_work[step % BUFFER_COUNT].wait()
+            chunks[send_chunk].add_(recv_buffer[step % BUFFER_COUNT])
 
-        send_buffer.copy_(chunks[send_chunk])
-        # Send and receive
-        work0 = dist.isend(send_buffer, dst=send_rank, group=group)
-        work1 = dist.irecv(recv_buffer, src=recv_rank, group=group)
-
-        work0.wait()
-        work1.wait()
-
-        # Update the corresponding chunk
-        chunks[recv_chunk].add_(recv_buffer)
+        if step <= (world_size - 1) * BUFFER_COUNT:
+            # Send and receive
+            send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
+            send_work[step % BUFFER_COUNT] = dist.isend(
+                send_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step
+            )
+            recv_work[step % BUFFER_COUNT] = dist.irecv(
+                recv_buffer[step % BUFFER_COUNT], src=recv_rank, group=group, tag=step
+            )
 
     if op == dist.ReduceOp.AVG:
-        chunks[rank].divide_(world_size)
+        for i in range(BUFFER_COUNT):
+            chunks[i + rank * BUFFER_COUNT].divide_(world_size)
 
-    for step in range(world_size - 1):
-        send_rank = (rank + 1) % world_size
-        recv_rank = (rank - 1) % world_size
+    send_work = [None] * BUFFER_COUNT
+    recv_work = [None] * BUFFER_COUNT
+    for step in range(1, world_size * BUFFER_COUNT + 1):
+        send_chunk = (rank * BUFFER_COUNT + BUFFER_COUNT - step) % num_buffers
 
-        send_chunk = (rank - step) % world_size
-        recv_chunk = (rank - step - 1) % world_size
+        if send_work[step % BUFFER_COUNT] is not None:
+            send_work[step % BUFFER_COUNT].wait()
+            recv_work[step % BUFFER_COUNT].wait()
+            chunks[send_chunk].copy_(recv_buffer[step % BUFFER_COUNT])
 
-        send_buffer.copy_(chunks[send_chunk])
-        # Send and receive
-        work0 = dist.isend(send_buffer, dst=send_rank, group=group)
-        work1 = dist.irecv(recv_buffer, src=recv_rank, group=group)
-
-        work0.wait()
-        work1.wait()
-
-        # Update the corresponding chunk
-        chunks[recv_chunk].copy_(recv_buffer)
+        if step <= (world_size - 1) * BUFFER_COUNT:
+            # Send and receive
+            send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
+            send_work[step % BUFFER_COUNT] = dist.isend(
+                send_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step
+            )
+            recv_work[step % BUFFER_COUNT] = dist.irecv(
+                recv_buffer[step % BUFFER_COUNT], src=recv_rank, group=group, tag=step
+            )
 
 
 class AllReduceBackend(Enum):

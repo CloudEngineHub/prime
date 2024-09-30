@@ -53,10 +53,11 @@ def ring_allreduce(
     world_size = group.size()
     rank = group.rank()
 
-    assert tensor.size(0) % world_size == 0, "Tensor size must be divisible by world size"
-
     # Divide the tensor into chunks
-    chunks = tensor.chunk(world_size)
+    flat_tensor = tensor.as_strided((tensor.numel(),), (1,))
+    chunks = flat_tensor.chunk(world_size)
+
+    assert flat_tensor.size(0) % world_size == 0, "Tensor size must be divisible by world size"
 
     # Temporary buffers for transferring data
     send_buffer = torch.empty_like(chunks[0], dtype=transfer_dtype)

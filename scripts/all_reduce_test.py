@@ -17,7 +17,7 @@ class Config(BaseConfig):
 def main(config: Config):
     world_info = get_world_info()
 
-    mat = torch.rand(8, config.size_model // 8)
+    mat = torch.rand(1, config.size_model)
 
     logger.info(
         f"\n ======== Benchmark all reduce between {world_info.world_size} gpus over {world_info.nnodes} nodes =========\n"

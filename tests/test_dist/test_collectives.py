@@ -15,7 +15,7 @@ def test_ring_allreduce(world_size: int, op: dist.ReduceOp, random_available_por
             world_size = dist.get_world_size()
 
             # Create a sample tensor
-            tensor = torch.randn(world_size, dtype=torch.float32)
+            tensor = torch.randn(world_size - 1, world_size, dtype=torch.float32)
             expected = tensor.clone()
 
             dist.all_reduce(expected, op=dist.ReduceOp.SUM)

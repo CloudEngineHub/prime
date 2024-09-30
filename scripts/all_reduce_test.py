@@ -3,7 +3,7 @@ import torch
 from torch.distributed import destroy_process_group, init_process_group
 import torch.utils.benchmark as benchmark
 
-from zeroband.collectives import AllReduceBackend, all_reduce_fn
+from zeroband.collectives import AllReduceBackend, ALL_REDUCE_FN
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 
@@ -23,7 +23,7 @@ def main(config: Config):
         f"\n ======== Benchmark all reduce between {world_info.world_size} gpus over {world_info.nnodes} nodes =========\n"
     )
 
-    all_reduce = all_reduce_fn[config.backend]
+    all_reduce = ALL_REDUCE_FN[config.backend]
 
     t0 = benchmark.Timer(stmt="all_reduce(mat)", globals={"all_reduce": all_reduce, "mat": mat})
     measured_time = t0.timeit(config.n_iters).mean

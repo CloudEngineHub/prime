@@ -4,7 +4,7 @@ import multiprocessing as mp
 import pytest
 
 from zeroband.collectives import ring_allreduce
-from zeroband.collectives import AllReduceBackend, all_reduce_fn
+from zeroband.collectives import AllReduceBackend, ALL_REDUCE_FN
 
 
 @pytest.mark.parametrize("world_size", [2, 3, 8])
@@ -41,7 +41,7 @@ def test_all_reduce_func(world_size, random_available_port, dist_environment, al
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, "gloo", rank=rank, world_size=world_size):
             data = (rank + 1) * torch.ones(10, 10)
-            all_reduce_fn[all_reduce_backend](
+            ALL_REDUCE_FN[all_reduce_backend](
                 data, op=dist.ReduceOp.SUM, group=dist.distributed_c10d._get_default_group()
             )
 

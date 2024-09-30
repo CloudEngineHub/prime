@@ -107,7 +107,7 @@ class AllReduceBackend(Enum):
     CUSTOM = "custom"
 
 
-all_reduce_fn: dict[AllReduceBackend, AllReduceFunc] = {
+ALL_REDUCE_FN: dict[AllReduceBackend, AllReduceFunc] = {
     AllReduceBackend.GLOO: gloo_all_reduce,
     AllReduceBackend.CUSTOM: ring_allreduce,
 }

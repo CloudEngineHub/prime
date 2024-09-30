@@ -1,3 +1,4 @@
+import os
 from torch.distributed.device_mesh import init_device_mesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
@@ -8,7 +9,7 @@ from typing import List, Tuple, Optional
 from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 
-TCPSTORE_TIMEOUT = timedelta(seconds=10)
+TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
 

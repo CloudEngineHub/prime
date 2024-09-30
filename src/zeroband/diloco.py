@@ -55,6 +55,9 @@ class Diloco:
         if self.fsdp_sharding_strategy not in [ShardingStrategy.FULL_SHARD, ShardingStrategy.SHARD_GRAD_OP]:
             raise ValueError("Diloco only support FULL_SHARD and SHARD_GRAD_OP")
 
+        if self.world_info.global_world_size < 1:
+            raise ValueError("Diloco requires a global world size of at least 1")
+
         self._init_offloaded_optimizer(model=model)
 
     def _init_offloaded_optimizer(self, model):

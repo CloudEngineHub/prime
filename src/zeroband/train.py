@@ -300,6 +300,7 @@ def train(config: Config):
         metric_logger.finish()
 
     ckpt_manager.wait_async_save_process()
+    logger.info("Training finished, exiting ...")
 
 
 if __name__ == "__main__":

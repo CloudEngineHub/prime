@@ -10,7 +10,6 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torchdata.stateful_dataloader import StatefulDataLoader
 import torch.distributed.checkpoint as dcp
-from torch.distributed import ProcessGroup
 from torch.distributed.checkpoint.state_dict import (
     set_optimizer_state_dict,
     set_model_state_dict,
@@ -94,7 +93,6 @@ class CkptManager:
         scheduler: LambdaLR,
         dataloader: StatefulDataLoader,
         training_progress: TrainingProgress,
-        process_group: ProcessGroup | None,
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
     ):
@@ -128,7 +126,6 @@ class CkptManager:
         else:
             self.diloco_states = {}
 
-        self.process_group = process_group
         self._logger = get_logger()
 
         self.async_save_process: list[multiprocessing.Process] = []
@@ -153,11 +150,11 @@ class CkptManager:
             if catch_warning:
                 warnings.simplefilter("ignore")
 
-            dcp.save(self.states, process_group=self.process_group, checkpoint_id=ckpt_path)
+            dcp.save(self.states, checkpoint_id=ckpt_path)
 
             if self.diloco_states:
                 diloco_ckpt_path = os.path.join(ckpt_path, f"diloco_{world_info.diloco_rank}")
-                dcp.save(self.diloco_states, process_group=self.process_group, checkpoint_id=diloco_ckpt_path)
+                dcp.save(self.diloco_states, checkpoint_id=diloco_ckpt_path)
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
 
             # dataloader is different for each diloco worker. If diloco is enable we use diloco_ckpt_path

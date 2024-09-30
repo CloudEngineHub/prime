@@ -1,6 +1,39 @@
-from typing import Optional
+from enum import Enum
+from typing import Callable, Optional, TypeAlias
 import torch
 import torch.distributed as dist
+
+AllReduceFunc: TypeAlias = Callable[
+    [torch.Tensor, dist.ReduceOp, Optional[dist.ProcessGroup], Optional[torch.dtype]], None
+]
+
+
+def gloo_all_reduce(
+    tensor: torch.Tensor,
+    op: dist.ReduceOp = dist.ReduceOp.SUM,
+    group: Optional[dist.ProcessGroup] = None,
+    transfer_dtype: Optional[torch.dtype] = None,
+) -> None:
+    """Wrap gloo all reduce"""
+    # # if transfer_dtype is None:
+    # #     transfer_dtype = tensor.dtype
+    # # if group is None:
+    # #     group = dist.distributed_c10d._get_default_group()
+    # if op not in [dist.ReduceOp.SUM, dist.ReduceOp.AVG]:
+    #     raise ValueError(f"Unsupported reduce operation {op}. Only SUM and AVG are supported.")
+
+    # # group = cast(dist.ProcessGroup, group) # just type hint stuff for IDE
+    # if op == dist.ReduceOp.AVG:
+    #     # todo check numerical stability of doing post or pre div
+    #     tensor.div_(group.size())
+
+    # if group is None:
+    #     dist.all_reduce(tensor, op)
+    # else:
+    #     group.allreduce(tensor, op)
+
+    # todo: investigate why test are failing if we use the pass group
+    dist.all_reduce(tensor, op)
 
 
 def ring_allreduce(
@@ -69,3 +102,14 @@ def ring_allreduce(
 
         # Update the corresponding chunk
         chunks[recv_chunk].copy_(recv_buffer)
+
+
+class AllReduceBackend(Enum):
+    GLOO = "gloo"
+    CUSTOM = "custom"
+
+
+all_reduce_fn: dict[AllReduceBackend, AllReduceFunc] = {
+    AllReduceBackend.GLOO: gloo_all_reduce,
+    AllReduceBackend.CUSTOM: ring_allreduce,
+}

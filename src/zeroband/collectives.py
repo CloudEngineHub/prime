@@ -15,25 +15,21 @@ def gloo_all_reduce(
     transfer_dtype: Optional[torch.dtype] = None,
 ) -> None:
     """Wrap gloo all reduce"""
-    # # if transfer_dtype is None:
-    # #     transfer_dtype = tensor.dtype
-    # # if group is None:
-    # #     group = dist.distributed_c10d._get_default_group()
-    # if op not in [dist.ReduceOp.SUM, dist.ReduceOp.AVG]:
-    #     raise ValueError(f"Unsupported reduce operation {op}. Only SUM and AVG are supported.")
+    if transfer_dtype is None:
+        transfer_dtype = tensor.dtype
+    if group is None:
+        group = dist.distributed_c10d._get_default_group()
+    if op not in [dist.ReduceOp.SUM, dist.ReduceOp.AVG]:
+        raise ValueError(f"Unsupported reduce operation {op}. Only SUM and AVG are supported.")
 
-    # # group = cast(dist.ProcessGroup, group) # just type hint stuff for IDE
-    # if op == dist.ReduceOp.AVG:
-    #     # todo check numerical stability of doing post or pre div
-    #     tensor.div_(group.size())
+    # group = cast(dist.ProcessGroup, group) # just type hint stuff for IDE
+    if op == dist.ReduceOp.AVG:
+        # todo check numerical stability of doing post or pre div
+        tensor.div_(group.size())
 
-    # if group is None:
-    #     dist.all_reduce(tensor, op)
-    # else:
-    #     group.allreduce(tensor, op)
+    tensor = tensor.to(transfer_dtype)  # todo is it no op ?
 
-    # todo: investigate why test are failing if we use the pass group
-    dist.all_reduce(tensor, op)
+    dist.all_reduce(tensor, op, group=group)
 
 
 def ring_allreduce(

@@ -90,3 +90,4 @@ HF_HUB_ETAG_TIMEOUT=500
 | `GLOBAL_PORT`         | Port number of the global store.                 | `None` |
 | `GLOBAL_WORLD_SIZE`   | The size of the global process group.            | `1` |
 | `GLOBAL_RANK`         | Rank of the process in the global process group. | `0` |
+| `ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS` | Number of seconds before the global store operations timeout | `300` |

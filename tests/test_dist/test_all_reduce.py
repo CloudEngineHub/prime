@@ -12,12 +12,16 @@ import pytest
 
 import multiprocessing
 
+from zeroband.diloco import AllReduceCompression, compression_fn
+
 
 @pytest.mark.parametrize("world_size", [2])
-def test_all_reduce(world_size, random_available_port, dist_environment):
+@pytest.mark.parametrize("compression", [AllReduceCompression.NONE, AllReduceCompression.FP16])
+def test_all_reduce(world_size, random_available_port, dist_environment, compression):
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, rank=rank, world_size=world_size):
-            data = (rank + 1) * torch.ones(10, 10).to(f"cuda:{rank}")
+            data = (rank + 1) * torch.ones(10, 10)
+            data = compression_fn[compression](data)
             dist.all_reduce(data, op=dist.ReduceOp.SUM)
             assert data.mean() == sum([i + 1 for i in range(world_size)])
 

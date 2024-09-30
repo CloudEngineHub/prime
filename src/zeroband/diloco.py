@@ -1,15 +1,24 @@
+from enum import Enum
+from typing import Callable
 from pydantic_config import BaseConfig
 import torch
-from torch import nn
+from torch import FloatTensor, nn
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
 
 
+class AllReduceCompression(Enum):
+    NONE = "none"
+    FP16 = "FP16"
+
+
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
+
+    compression: AllReduceCompression = AllReduceCompression.NONE
 
 
 class Diloco:
@@ -71,12 +80,20 @@ class Diloco:
         self._logger.debug("sync pseudo gradient")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
+                # fsdp empty weight
                 continue
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / self.global_pg.size()
-            dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.global_pg)
+            # todo check if its better to divide before or after for numerical stability
+
+            if self.config.compression != AllReduceCompression.NONE:
+                grad = compression_fn[self.config.compression](param_offloaded.grad)
+                dist.all_reduce(grad, op=dist.ReduceOp.SUM, group=self.global_pg)
+                param_offloaded.grad = grad.to(param_offloaded.dtype)
+            else:
+                dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.global_pg)
             # todo async here
 
     def sync_inner_model(self, model: nn.Module):
@@ -112,3 +129,17 @@ class Diloco:
             self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
         self.sync_inner_model(model)
+
+
+def fp16_compression(data: FloatTensor) -> FloatTensor:
+    """compress a fp32 tensor to fp16"""
+    FP16_MIN, FP16_MAX = torch.finfo(torch.float16).min, torch.finfo(torch.float16).max
+
+    data = data.to(torch.float32, copy=True)
+    return data.clamp_(FP16_MIN, FP16_MAX).to(torch.float16)
+
+
+compression_fn: dict[AllReduceCompression, Callable[[FloatTensor], FloatTensor]] = {
+    AllReduceCompression.NONE: lambda x: x,
+    AllReduceCompression.FP16: fp16_compression,
+}

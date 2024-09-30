@@ -7,11 +7,12 @@ import torch
 import torch.distributed as dist
 from torch.distributed.fsdp import ShardingStrategy
 
-from zeroband.diloco import Diloco, DilocoConfig
+from zeroband.diloco import AllReduceCompression, Diloco, DilocoConfig
 
 
-@pytest.mark.parametrize("world_size", [2])  # [1, 2])
-def test_diloco_all_reduce(world_size, random_available_port, dist_environment):
+@pytest.mark.parametrize("world_size", [2])
+@pytest.mark.parametrize("compression", [AllReduceCompression.NONE, AllReduceCompression.FP16])
+def test_diloco_all_reduce(world_size, random_available_port, dist_environment, compression):
     """
     In this test we manually create a inner model and a outer model where we control the weight:
     inner has weight: (rank + 1) / 2
@@ -23,7 +24,7 @@ def test_diloco_all_reduce(world_size, random_available_port, dist_environment):
 
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, rank=rank, world_size=world_size, global_unique_id=str(rank)):
-            diloco_config = DilocoConfig(inner_steps=10)
+            diloco_config = DilocoConfig(inner_steps=10, compression=compression)
 
             model = torch.nn.Linear(10, 10)
 

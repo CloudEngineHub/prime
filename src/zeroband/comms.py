@@ -117,7 +117,7 @@ class ElasticDeviceMesh:
     def __del__(self):
         dist.destroy_process_group()
 
-    def _init_global_pg(self) -> dist.Store:
+    def _init_global_pg(self) -> dist.ProcessGroup:
         store = dist.TCPStore(
             host_name=self.world_info.global_addr,
             port=self.world_info.global_port + self.world_info.rank,

@@ -102,17 +102,17 @@ class ElasticDeviceMesh:
 
         # Initialize local process group
         dist.init_process_group(backend="cpu:gloo,cuda:nccl")
-        self._device_mesh = init_device_mesh(
+        self.mesh = init_device_mesh(
             "cuda",
             (self.world_info.nnodes, self.world_info.local_world_size),
             mesh_dim_names=("internode", "intranode"),
         )
-        self.local_pg = self._device_mesh.get_group("intranode")
+        self.local_pg = self.mesh.get_group("intranode")
 
         if self.world_info.rank == 0:
-            self._logger.debug(f"global pg world : {self.global_pg.size()}, local pg: {self.local_pg.size()}")
+            self._logger.info(f"global pg world : {self.global_pg.size()}, local pg: {self.local_pg.size()}")
         else:
-            self._logger.debug(f"local pg world : {self.local_pg.size()}")
+            self._logger.info(f"local pg world : {self.local_pg.size()}")
 
     def __del__(self):
         dist.destroy_process_group()

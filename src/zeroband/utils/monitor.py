@@ -14,7 +14,7 @@ async def get_external_ip(max_retries=3, retry_delay=5):
                 async with session.get('https://api.ipify.org', timeout=10) as response:
                     response.raise_for_status()
                     return await response.text()
-            except ClientError as e:
+            except ClientError:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
     return None

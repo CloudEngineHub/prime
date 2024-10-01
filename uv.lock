@@ -1790,6 +1790,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "datasets" },
+    { name = "einops" },
     { name = "numpy" },
     { name = "pydantic-config" },
     { name = "setuptools" },
@@ -1801,7 +1802,6 @@ dependencies = [
 all = [
     { name = "aiohttp" },
     { name = "asyncio" },
-    { name = "einops" },
     { name = "requests" },
     { name = "wandb" },
 ]
@@ -1818,7 +1818,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.10.5" },
     { name = "asyncio", marker = "extra == 'all'", specifier = ">=3.4.3" },
     { name = "datasets", specifier = ">=3.0.0" },
-    { name = "einops", marker = "extra == 'all'" },
+    { name = "einops" },
     { name = "numpy" },
     { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=e529c9c" },
     { name = "requests", marker = "extra == 'all'", specifier = ">=2.32.3" },

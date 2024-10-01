@@ -2,6 +2,22 @@ import pickle
 from typing import Any, Protocol
 import importlib
 from zeroband.utils.logging import get_logger
+import aiohttp
+from aiohttp import ClientError
+import asyncio
+
+
+async def get_external_ip(max_retries=3, retry_delay=5):
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(max_retries):
+            try:
+                async with session.get('https://api.ipify.org', timeout=10) as response:
+                    response.raise_for_status()
+                    return await response.text()
+            except ClientError as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+    return None
 
 
 class Monitor(Protocol):
@@ -21,7 +37,7 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.batch_size = config["monitor"]["batch_size"] or 10
+        self.log_flush_interval = config["monitor"]["log_flush_interval"]
         self.base_url = config["monitor"]["base_url"]
         self.auth_token = config["monitor"]["auth_token"]
 
@@ -30,6 +46,9 @@ class HttpMonitor:
         self.run_id = config.get("run_id", None)
         if self.run_id is None:
             raise ValueError("run_id must be set for HttpMonitor")
+
+        self.node_ip_address = None
+        self.node_ip_address_fetch_status = None
 
     def _remove_duplicates(self):
         seen = set()
@@ -56,35 +75,50 @@ class HttpMonitor:
         self._handle_send_batch()
 
     def _handle_send_batch(self, flush: bool = False):
-        if len(self.data) >= self.batch_size or flush:
+        if len(self.data) >= self.log_flush_interval or flush:
             import asyncio
 
             # do this in a separate thread to not affect training loop
             asyncio.create_task(self._send_batch())
 
+    async def _set_node_ip_address(self):
+        if self.node_ip_address is None and self.node_ip_address_fetch_status != "failed":
+            ip_address = await get_external_ip()
+            if ip_address is None:
+                self._logger.error("Failed to get external IP address")
+                # set this to "failed" so we keep trying again
+                self.node_ip_address_fetch_status = "failed"
+            else:
+                self.node_ip_address = ip_address
+                self.node_ip_address_fetch_status = "success"
+
     async def _send_batch(self):
         import aiohttp
 
+        await self._set_node_ip_address()
         self._remove_duplicates()
-        batch = self.data[: self.batch_size]
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
-        payload = {"logs": batch}
+
+        batch = self.data[:self.log_flush_interval]
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.auth_token}"
+        }
+        payload = {
+            "node_ip_address": self.node_ip_address,
+            "logs": batch
+        }
         api = f"{self.base_url}/training_runs/{self.run_id}/logs"
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(api, json=payload, headers=headers) as response:
                     if response is not None:
-                        await response.raise_for_status()
-                    else:
-                        self._logger.error("Received None response from server")
-                        pass
-
+                        response.raise_for_status()
         except Exception as e:
             self._logger.error(f"Error sending batch to server: {str(e)}")
             pass
 
-        self.data = self.data[self.batch_size :]
+        self.data = self.data[self.log_flush_interval :]
         return True
 
     def _finish(self):

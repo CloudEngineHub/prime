@@ -55,7 +55,7 @@ class TrainConfig(BaseConfig):
 
 
 class MonitorConfig(BaseConfig):
-    type: Literal["wandb", "dummy", "http"] = "dummy"
+    type: Literal["wandb", "dummy", "http"]
     batch_size: int = 10
     # for http monitor
     base_url: str | None = None
@@ -75,7 +75,7 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
-    monitor: MonitorConfig
+    monitor: MonitorConfig = MonitorConfig(type="wandb")
 
 
 def train(config: Config):

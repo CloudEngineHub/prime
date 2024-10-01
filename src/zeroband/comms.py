@@ -106,7 +106,7 @@ class ElasticDeviceMesh:
             if leaver_id == "null":
                 break
             leavers.append(leaver_id)
-        print(f"Joiners: {joiners}, Leavers: {leavers}")
+        self._logger.debug(f"Joiners: {joiners}, Leavers: {leavers}")
         return joiners, leavers
 
     def _clear_joiners_and_leavers(self):
@@ -214,7 +214,7 @@ class ElasticDeviceMesh:
         """Reinitialize the global_pg if there are joiners or leavers."""
         if self._global_leader:
             self._resolve_world()
-        dist.barrier()
+        dist.barrier(self.global_pg)
         status = self.global_store.get("status").decode("utf-8")
         if status == "running":  # No joiners or leavers
             return
@@ -239,6 +239,9 @@ class ElasticDeviceMesh:
 
         self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
         self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
+        self._logger.debug(
+            f"New global rank: {self.world_info.global_rank}, New global world size: {self.world_info.global_world_size} New mesh count: {self.mesh_count}"
+        )
         prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
 
         # Create process group

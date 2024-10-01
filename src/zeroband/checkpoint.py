@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import gc
 import multiprocessing
 import os
 import time
@@ -161,6 +162,8 @@ class CkptManager:
                 torch.save({"data_loader": self.dataloader.state_dict()}, f)
 
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+        gc.collect()  # because we are badass engineer
 
         if remote_ckpt_path is not None:
             self._async_save_remote(ckpt_path, remote_ckpt_path)

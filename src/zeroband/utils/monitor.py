@@ -3,8 +3,6 @@ from typing import Any, Protocol
 import importlib
 from zeroband.utils.logging import get_logger
 
-logger = get_logger()
-
 
 class Monitor(Protocol):
     def __init__(self, project, config): ...
@@ -23,11 +21,13 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.batch_size = config['monitor']['batch_size'] or 10
-        self.base_url = config['monitor']['base_url']
-        self.auth_token = config['monitor']['auth_token']
+        self.batch_size = config["monitor"]["batch_size"] or 10
+        self.base_url = config["monitor"]["base_url"]
+        self.auth_token = config["monitor"]["auth_token"]
 
-        self.run_id = config.get('run_id', None)
+        self._logger = get_logger()
+
+        self.run_id = config.get("run_id", None)
         if self.run_id is None:
             raise ValueError("run_id must be set for HttpMonitor")
 
@@ -43,13 +43,11 @@ class HttpMonitor:
 
     def set_stage(self, stage: str):
         import time
+
         # add a new log entry with the stage name
-        self.data.append({
-            "stage": stage,
-            "time": time.time()
-        })
-        self._handle_send_batch(flush=True) # it's useful to have the most up-to-date stage broadcasted
-    
+        self.data.append({"stage": stage, "time": time.time()})
+        self._handle_send_batch(flush=True)  # it's useful to have the most up-to-date stage broadcasted
+
     def log(self, data: dict[str, Any]):
         # Lowercase the keys in the data dictionary
         lowercased_data = {k.lower(): v for k, v in data.items()}
@@ -60,6 +58,7 @@ class HttpMonitor:
     def _handle_send_batch(self, flush: bool = False):
         if len(self.data) >= self.batch_size or flush:
             import asyncio
+
             # do this in a separate thread to not affect training loop
             asyncio.create_task(self._send_batch())
 
@@ -67,14 +66,9 @@ class HttpMonitor:
         import aiohttp
 
         self._remove_duplicates()
-        batch = self.data[:self.batch_size]
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.auth_token}"
-        }
-        payload = {
-            "logs": batch
-        }
+        batch = self.data[: self.batch_size]
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.auth_token}"}
+        payload = {"logs": batch}
         api = f"{self.base_url}/training_runs/{self.run_id}/logs"
 
         try:
@@ -83,28 +77,27 @@ class HttpMonitor:
                     if response is not None:
                         await response.raise_for_status()
                     else:
-                        logger.error("Received None response from server")
+                        self._logger.error("Received None response from server")
                         pass
 
         except Exception as e:
-            logger.error(f"Error sending batch to server: {str(e)}")
+            self._logger.error(f"Error sending batch to server: {str(e)}")
             pass
 
-        self.data = self.data[self.batch_size:]
+        self.data = self.data[self.batch_size :]
         return True
 
     def _finish(self):
         import requests
-        headers = {
-            "Content-Type": "application/json"
-        }
+
+        headers = {"Content-Type": "application/json"}
         api = f"{self.base_url}/training_runs/{self.run_id}/finish"
         try:
             response = requests.post(api, headers=headers)
             response.raise_for_status()
             return True
         except requests.RequestException as e:
-            logger.debug(f"Failed to send finish signal to http monitor: {e}")
+            self._logger.debug(f"Failed to send finish signal to http monitor: {e}")
             return False
 
     def finish(self):

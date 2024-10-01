@@ -36,7 +36,7 @@ class ElasticDeviceMesh:
     local_pg: dist.ProcessGroup
     global_pg: dist.ProcessGroup
 
-    def __init__(self):
+    def __init__(self, backend: str = "cpu:gloo,cuda:nccl"):
         self._logger = get_logger()
         self.world_info = get_world_info()
 
@@ -46,7 +46,7 @@ class ElasticDeviceMesh:
             self._init_global_pg()
 
         # Initialize local process group
-        dist.init_process_group(backend="cpu:gloo,cuda:nccl")
+        dist.init_process_group(backend=backend)
         self.mesh = init_device_mesh(
             "cuda",
             (self.world_info.nnodes, self.world_info.local_world_size),

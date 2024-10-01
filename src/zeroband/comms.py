@@ -71,23 +71,24 @@ class ElasticDeviceMesh:
         else:
             self.global_status = self._wait_for_status()
 
-    def _queue_join(self, unique_id: str):
+    def _queue_join(self):
         """Queue a node to join the mesh."""
         for i in range(MAX_JOINERS):
             joiner_id = self.global_store.get(f"joiner_{i}").decode("utf-8")
             if joiner_id == "null":
-                self.global_store.set(f"joiner_{i}", unique_id)
+                self.global_store.set(f"joiner_{i}", self.world_info.global_unique_id)
                 self.global_store.set(f"joiner_{i + 1}", "null")
                 break
         else:
             raise RuntimeError("Too many joiners")
 
-    def _queue_leave(self, unique_id: str):
+    def _queue_leave(self):
         """Queue a node to leave the mesh."""
+        self.leaving = True
         for i in range(MAX_LEAVERS):
             leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
             if leaver_id == "null":
-                self.global_store.set(f"leaver_{i}", unique_id)
+                self.global_store.set(f"leaver_{i}", self.world_info.global_unique_id)
                 self.global_store.set(f"leaver_{i + 1}", "null")
                 break
         else:
@@ -156,7 +157,7 @@ class ElasticDeviceMesh:
             prefix_store = dist.PrefixStore("mesh_0", self.global_store)
         elif self.global_status == "running":  # Join path
             # Ask to join and then wait for the status to be "reinit"
-            self._queue_join(self.world_info.global_unique_id)
+            self._queue_join()
             self._wait_for_status("reinit")
 
             # Get the global rank and world size and create a new prefix store

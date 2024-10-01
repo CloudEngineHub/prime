@@ -98,7 +98,9 @@ def test_elastic_device_mesh(world_size: int, global_world_size: int, mock_env):
 
 @pytest.mark.parametrize("world_size", [2, 8])
 @pytest.mark.parametrize("global_world_size", [2, 8])
-def test_elastic_device_mesh_on_ramp(world_size: int, global_world_size: int, mock_env):
+def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int, mock_env):
+    ready_event = mp.Event()
+
     def foo(**kwargs):
         with mock_env(**kwargs):
             test_value = int(kwargs["TEST_VALUE"])
@@ -107,22 +109,41 @@ def test_elastic_device_mesh_on_ramp(world_size: int, global_world_size: int, mo
             edm.maybe_reinit_global_pg()
             assert edm.mesh_count == 0
             assert edm.global_pg.size() == global_world_size
-            time.sleep(1)
+
+            ready_event.wait()  # Wait for bar to signal readiness
+            time.sleep(0.5)  # Give time for bar to queue
+
             edm.maybe_reinit_global_pg()
             assert edm.mesh_count == 1
             assert edm.global_pg.size() == global_world_size + 1
+
+            if test_value == 1:
+                edm._queue_leave()
 
             a = torch.arange(3) * (test_value + 1)
             sum_ints = global_world_size * (global_world_size + 1) // 2 + 100
             dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
+            edm.maybe_reinit_global_pg()
+            if test_value == 1:
+                return
+            # assert edm.mesh_count == 2
+            assert edm.global_pg.size() == global_world_size
+
+            # a = torch.arange(3) * (test_value + 1)
+            # sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
+            # dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
+            # assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
+
             dist.barrier(edm.global_pg)
 
     def bar(**kwargs):
         with mock_env(**kwargs):
             test_value = int(kwargs["TEST_VALUE"])
-            time.sleep(1)  # TODO: Use queue to signal instead of time
+            time.sleep(1)
+
+            ready_event.set()  # Signal that we are about to queue
 
             edm = ElasticDeviceMesh()
             assert edm.mesh_count == 1
@@ -132,6 +153,15 @@ def test_elastic_device_mesh_on_ramp(world_size: int, global_world_size: int, mo
             sum_ints = global_world_size * (global_world_size + 1) // 2 + 100
             dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
+
+            edm.maybe_reinit_global_pg()
+            # assert edm.mesh_count == 2
+            assert edm.global_pg.size() == global_world_size
+
+            # a = torch.arange(3) * (test_value + 1)
+            # sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
+            # dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
+            # assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             dist.barrier(edm.global_pg)
 

@@ -21,7 +21,7 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
@@ -192,6 +192,8 @@ def train(config: Config):
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
         metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
 
+    gpu_mem_monitor = GPUMemoryMonitor()
+
     train_dataloader_iterator = iter(train_dataloader)
 
     num_inner_steps = config.diloco.inner_steps if config.diloco is not None else 1
@@ -254,6 +256,10 @@ def train(config: Config):
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": training_progress.total_tokens,
             }
+
+            peak_gpu_stats = gpu_mem_monitor.get_peak_stats()
+            metrics.update(peak_gpu_stats)
+
             log = f"step: {training_progress.step}, loss: {loss_batch.item():.4f}"
 
             tokens_per_second = perf_counter.get_tokens_per_second()
@@ -302,6 +308,8 @@ def train(config: Config):
             )
             mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
             logger.info(f"effective mfu: {mfu}")
+
+        logger.info(f"outer step peak gpu stats: {gpu_mem_monitor.format_peak_states()}")
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.

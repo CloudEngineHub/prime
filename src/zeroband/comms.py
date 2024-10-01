@@ -10,65 +10,9 @@ from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 
 
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
+TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
-
-
-def _wait_for_status(store: dist.Store, status: Optional[str] = None) -> str:
-    while True:
-        try:
-            ret = store.get("status").decode("utf-8")
-            if status is None or ret == status:
-                return ret
-            time.sleep(0.1)
-        except dist.DistStoreError as e:
-            if status is not None:
-                raise e
-            time.sleep(0.1)
-
-
-def _queue_join(store: dist.Store, unique_id: str):
-    for i in range(MAX_JOINERS):
-        joiner_id = store.get(f"joiner_{i}").decode("utf-8")
-        if joiner_id == "null":
-            store.set(f"joiner_{i}", unique_id)
-            store.set(f"joiner_{i + 1}", "null")
-            break
-    else:
-        raise RuntimeError("Too many joiners")
-
-
-def _queue_leave(store: dist.Store, unique_id: str):
-    for i in range(MAX_LEAVERS):
-        leaver_id = store.get(f"leaver_{i}").decode("utf-8")
-        if leaver_id == "null":
-            store.set(f"leaver_{i}", unique_id)
-            store.set(f"leaver_{i + 1}", "null")
-            break
-    else:
-        raise RuntimeError("Too many leavers")
-
-
-def _get_joiners_and_leavers(store: dist.Store) -> Tuple[List[str], List[str]]:
-    joiners = []
-    leavers = []
-    for i in range(MAX_JOINERS):
-        joiner_id = store.get(f"joiner_{i}").decode("utf-8")
-        if joiner_id == "null":
-            break
-        joiners.append(joiner_id)
-    for i in range(MAX_LEAVERS):
-        leaver_id = store.get(f"leaver_{i}").decode("utf-8")
-        if leaver_id == "null":
-            break
-        leavers.append(leaver_id)
-    print(f"Joiners: {joiners}, Leavers: {leavers}")
-    return joiners, leavers
-
-
-def _clear_joiners_and_leavers(store: dist.Store):
-    store.set("joiner_0", "null")
-    store.set("leaver_0", "null")
 
 
 class ElasticDeviceMesh:
@@ -117,60 +61,130 @@ class ElasticDeviceMesh:
     def __del__(self):
         dist.destroy_process_group()
 
+    def _init_global_store_and_status(self):
+        """Initialize the global store with mesh_count, joiner_0, leaver_0, and status. Also sets the global status."""
+        if self.world_info.global_rank == 0:
+            self.global_store.set("mesh_count", "0")
+            self.global_store.set("joiner_0", "null")
+            self.global_store.set("leaver_0", "null")
+            self.global_store.set("status", "init")
+            self.global_status = "init"
+        else:
+            self.global_status = self._wait_for_status()
+
+    def _queue_join(self, unique_id: str):
+        """Queue a node to join the mesh."""
+        for i in range(MAX_JOINERS):
+            joiner_id = self.global_store.get(f"joiner_{i}").decode("utf-8")
+            if joiner_id == "null":
+                self.global_store.set(f"joiner_{i}", unique_id)
+                self.global_store.set(f"joiner_{i + 1}", "null")
+                break
+        else:
+            raise RuntimeError("Too many joiners")
+
+    def _queue_leave(self, unique_id: str):
+        """Queue a node to leave the mesh."""
+        for i in range(MAX_LEAVERS):
+            leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
+            if leaver_id == "null":
+                self.global_store.set(f"leaver_{i}", unique_id)
+                self.global_store.set(f"leaver_{i + 1}", "null")
+                break
+        else:
+            raise RuntimeError("Too many leavers")
+
+    def _get_joiners_and_leavers(self) -> Tuple[List[str], List[str]]:
+        joiners = []
+        leavers = []
+        for i in range(MAX_JOINERS):
+            joiner_id = self.global_store.get(f"joiner_{i}").decode("utf-8")
+            if joiner_id == "null":
+                break
+            joiners.append(joiner_id)
+        for i in range(MAX_LEAVERS):
+            leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
+            if leaver_id == "null":
+                break
+            leavers.append(leaver_id)
+        print(f"Joiners: {joiners}, Leavers: {leavers}")
+        return joiners, leavers
+
+    def _clear_joiners_and_leavers(self):
+        self.global_store.set("joiner_0", "null")
+        self.global_store.set("leaver_0", "null")
+
+    def _wait_for_status(self, status: Optional[str] = None) -> str:
+        """Wait for status to be set in the store.
+
+        Args:
+            store (dist.Store): The store to check.
+            status (Optional[str], optional): The status to wait for. If None, wait for any status. Defaults to None.
+        Returns:
+            status (str): The status.
+        """
+        while True:
+            try:
+                ret = self.global_store.get("status").decode("utf-8")
+                if status is None or ret == status:
+                    return ret
+                time.sleep(TCPSTORE_POLLING_INTERVAL)
+            except dist.DistStoreError as e:
+                if status is not None:
+                    raise e
+                time.sleep(0.1)
+
+    def _get_assigned_global_rank_and_size(self) -> Tuple[int, int]:
+        """Get the assigned global rank from the leader."""
+        return
+
     def _init_global_pg(self) -> dist.ProcessGroup:
-        store = dist.TCPStore(
+        # Each rank gets its own global store with global rank 0 as the master
+        self._global_leader = self.world_info.global_rank == 0
+        self.global_store = dist.TCPStore(
             host_name=self.world_info.global_addr,
             port=self.world_info.global_port + self.world_info.rank,
             timeout=TCPSTORE_TIMEOUT,
-            is_master=(self.world_info.global_rank == 0),
+            is_master=self._global_leader,
         )
 
         # Initialize store
-        if self.world_info.global_rank == 0:
-            store.set("mesh_count", "0")
-            store.set("joiner_0", "null")
-            store.set("leaver_0", "null")
-            store.set("status", "init")
-            status = "init"
-        else:
-            status = _wait_for_status(store)
+        self._init_global_store_and_status()
 
-        if status == "init":
-            # First time initialization
+        if self.global_status == "init":  # First time init path
             self.mesh_count = 0
-            self.prefix_store = dist.PrefixStore("mesh_0", store)
-            pg = dist.ProcessGroupGloo(
-                self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
+            prefix_store = dist.PrefixStore("mesh_0", self.global_store)
+        elif self.global_status == "running":  # Join path
+            # Ask to join and then wait for the status to be "reinit"
+            self._queue_join(self.world_info.global_unique_id)
+            self._wait_for_status("reinit")
+
+            # Get the global rank and world size and create a new prefix store
+            self.world_info.global_rank = int(
+                self.global_store.get(f"rank_{self.world_info.global_unique_id}").decode("utf-8")
             )
-            if self.world_info.global_rank == 0:
-                store.set("status", "running")
-            store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
-        elif status == "running":
-            # Node wants to join
-            _queue_join(store, self.world_info.global_unique_id)
-            _wait_for_status(store, "reinit")
-            # Get assigned rank
-            self.world_info.global_rank = int(store.get(f"rank_{self.world_info.global_unique_id}").decode("utf-8"))
-            # Get updated world_size
-            self.world_info.global_world_size = int(store.get("world_size").decode("utf-8"))
-            self.mesh_count = int(store.get("mesh_count").decode("utf-8"))
-            self.prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", store)
-            pg = dist.ProcessGroupGloo(
-                self.prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
-            )
+            self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
+            self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
+            prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
         else:
-            # TODO: Could be in "reinit" status
-            raise RuntimeError(f"Unknown status {status}")
+            # TODO: Could be in "reinit" status. We probably just recurse until running in this case
+            raise RuntimeError(f"Unknown status {self.global_status}")
+        pg = dist.ProcessGroupGloo(
+            prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
+        )
+        if self._global_leader:
+            self.global_store.set("status", "running")
+        self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
+        self.global_status = "running"
 
         # Setting instance variables
-        self.global_store = store
-        self.leaving = False
+        self.leaving = False  # TODO: do we need this?
         return pg
 
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes."""
         # Find joiners and leavers
-        joiners, leavers = _get_joiners_and_leavers(self.global_store)
+        joiners, leavers = self._get_joiners_and_leavers()
         # If no joiners or leavers, no resolution needed
         if len(joiners) == 0 and len(leavers) == 0:
             return
@@ -222,7 +236,7 @@ class ElasticDeviceMesh:
         )
 
         if self.rank == 0:
-            _clear_joiners_and_leavers(self.global_store)
+            self._clear_joiners_and_leavers()
             self.global_store.set("status", "running")
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)
         if self.local_rank == 0 and new_uuid_rank != prev_uuid_rank:

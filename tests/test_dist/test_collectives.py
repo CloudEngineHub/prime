@@ -35,6 +35,39 @@ def test_ring_allreduce(world_size: int, op: dist.ReduceOp, random_available_por
             pytest.fail(f"Process {p.pid} failed with exit code {p.exitcode}")
 
 
+@pytest.mark.parametrize("world_size", [2, 8])
+@pytest.mark.parametrize("op", [dist.ReduceOp.SUM, dist.ReduceOp.AVG])
+@pytest.mark.parametrize("transfer_dtype", [torch.bfloat16])
+def test_ring_allreduce_quant(
+    world_size: int, op: dist.ReduceOp, transfer_dtype: torch.dtype, random_available_port: int, dist_environment
+):
+    def all_reduce(rank: int, world_size: int):
+        with dist_environment(random_available_port, "gloo", rank=rank, world_size=world_size):
+            world_size = dist.get_world_size()
+
+            # Create a sample tensor
+            tensor = torch.randn(world_size - 1, world_size * 8, dtype=torch.float32)
+            expected = tensor.clone()
+
+            dist.all_reduce(expected, op=dist.ReduceOp.SUM)
+            if op == dist.ReduceOp.AVG:
+                expected /= world_size
+            ring_allreduce(
+                tensor, op=op, group=dist.distributed_c10d._get_default_group(), transfer_dtype=transfer_dtype
+            )
+
+            assert torch.allclose(tensor, expected, atol=1e-2, rtol=1e-2)
+
+    # Perform ring all-reduce
+    processes = [mp.Process(target=all_reduce, args=(rank, world_size)) for rank in range(world_size)]
+    for p in processes:
+        p.start()
+    for p in processes:
+        p.join()
+        if p.exitcode != 0:
+            pytest.fail(f"Process {p.pid} failed with exit code {p.exitcode}")
+
+
 @pytest.mark.parametrize("world_size", [2])
 @pytest.mark.parametrize("all_reduce_backend", [AllReduceBackend.GLOO, AllReduceBackend.CUSTOM])
 def test_all_reduce_func(world_size, random_available_port, dist_environment, all_reduce_backend):

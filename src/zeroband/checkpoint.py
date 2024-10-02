@@ -48,7 +48,7 @@ class ModelWrapper(Stateful):
         self.model = model
 
     def state_dict(self) -> dict[str, Any]:
-        return get_model_state_dict(self.model)
+        return get_model_state_dict(self.model, options=StateDictOptions(strict=False))
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         set_model_state_dict(model=self.model, model_state_dict=state_dict, options=StateDictOptions(strict=False))
@@ -70,7 +70,10 @@ class OptimizerWrapper(Stateful):
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         set_optimizer_state_dict(
-            model=self.model, optimizers=self.optim, optim_state_dict=state_dict, options=StateDictOptions(strict=False)
+            model=self.model,
+            optimizers=self.optim,
+            optim_state_dict=state_dict,
+            options=StateDictOptions(flatten_optimizer_state_dict=True),
         )
 
 

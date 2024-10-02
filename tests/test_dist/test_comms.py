@@ -59,10 +59,10 @@ def test_elastic_device_mesh(world_size: int, global_world_size: int, mock_env):
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             global_rank = int(kwargs["GLOBAL_RANK"])
-            a = torch.arange(3) * (global_rank + 1)
+            a = torch.arange(3) * (global_rank + 1) + rank
             dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
             sum_ints = global_world_size * (global_world_size + 1) // 2
-            assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
+            assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]) + rank * global_world_size)
 
     global_ports = [i for i in range(21970, 21970 + world_size)]
     master_ports = [i for i in range(31000, 31000 + global_world_size)]
@@ -96,7 +96,7 @@ def test_elastic_device_mesh(world_size: int, global_world_size: int, mock_env):
             pytest.fail(f"Process {p.pid} failed with exit code {p.exitcode}")
 
 
-@pytest.mark.parametrize("world_size", [2, 8])
+@pytest.mark.parametrize("world_size", [1, 2, 8])
 @pytest.mark.parametrize("global_world_size", [2, 8])
 def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int, mock_env):
     ready_event = mp.Event()
@@ -158,7 +158,7 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
             # assert edm.mesh_count == 2
             assert edm.global_pg.size() == global_world_size
 
-            # a = torch.arange(3) * (test_value + 1)
+            # a = torch.arange(3) * test_value
             # sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
             # dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
             # assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
@@ -186,6 +186,7 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
                         "GLOBAL_RANK": str(global_rank),
                         "GLOBAL_WORLD_SIZE": str(global_world_size),
                         "ZERO_BAND_LOG_LEVEL": "DEBUG",
+                        "ZERO_BAND_LOG_ALL_RANK": "true",
                         "TEST_VALUE": str(global_rank),
                     },
                 )

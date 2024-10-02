@@ -90,6 +90,8 @@ class CkptManager:
             ...
     """
 
+    states: dict[str, Stateful]
+
     def __init__(
         self,
         model: nn.Module,
@@ -100,20 +102,11 @@ class CkptManager:
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
     ):
-        self.model = ModelWrapper(model)
-        self.optimizer = OptimizerWrapper(model, optimizer)
+        self.model = model
+        self.optimizer = optimizer
         self.scheduler = scheduler
         self.dataloader = dataloader
         self.training_progress = training_progress
-
-        # states can only be stateful object, hence we need to wrap Model and Optimizer
-        self.states: dict[str, Stateful] = {
-            "model": self.model,
-            "optimizer": self.optimizer,
-            "scheduler": self.scheduler,
-            # "dataloader": self.dataloader, # ignoring dataloader for now as each rank has its own dataloader
-            "training_progress": self.training_progress,
-        }
 
         assert (diloco_offloaded_param_list is None) == (
             diloco_offloaded_optimizer is None
@@ -123,14 +116,26 @@ class CkptManager:
         # which might make the ckpt less generic in term of loading from different number of device. FSDP ckpt seems to be a mess tho
         self.diloco_offloaded_param_list = diloco_offloaded_param_list
 
-        if diloco_offloaded_optimizer is not None:
-            # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
-            # main reason is that we actually don't a cpu model but just a list of cpu parameters.
-            self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
+        self._init_state()
 
         self._logger = get_logger()
 
         self.async_save_process: list[multiprocessing.Process] = []
+
+    def _init_state(self):
+        # states can only be stateful object, hence we need to wrap Model and Optimizer
+        self.states: dict[str, Stateful] = {
+            "model": ModelWrapper(self.model),
+            "optimizer": OptimizerWrapper(self.model, self.optimizer),
+            "scheduler": self.scheduler,
+            # "dataloader": self.dataloader, # ignoring dataloader for now as each rank has its own dataloader
+            "training_progress": self.training_progress,
+        }
+
+        if self.diloco_offloaded_optimizer is not None:
+            # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
+            # main reason is that we actually don't a cpu model but just a list of cpu parameters.
+            self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
     def save(self, ckpt_path: str, remote_ckpt_path: str | None) -> None:
         """
@@ -216,7 +221,6 @@ class CkptManager:
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{world_info.diloco_rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)
-
         # since we don't load the param list from the state dict as its the same as the model one we just copy
         if self.diloco_offloaded_param_list is not None:
             for param_offloaded, param_model in zip(self.diloco_offloaded_param_list, self.model.model.parameters()):
@@ -227,5 +231,7 @@ class CkptManager:
             rank_state_dict = torch.load(f)
 
         self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+
+        self._init_state()
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")

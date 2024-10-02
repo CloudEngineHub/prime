@@ -141,6 +141,10 @@ class ElasticDeviceMesh:
 
     def _init_global_pg(self) -> None:
         # Each rank gets its own global store with global rank 0 as the master
+        time_start = time.perf_counter()
+        self._logger.info(
+            f"Elastic Device mesh init: Looking for peers via {self.world_info.global_addr}:{self.world_info.global_port}"
+        )
         self._global_leader = self.world_info.global_rank == 0
         self.global_store = dist.TCPStore(
             host_name=self.world_info.global_addr,
@@ -193,6 +197,9 @@ class ElasticDeviceMesh:
         # We might be able to get away with only doing in joining path.
         # Let's not risk it for now though.
         dist.barrier(self.global_pg)
+        self._logger.info(
+            f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
+        )
 
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes if there are joiners or leavers. Else, do nothing."""

@@ -128,13 +128,13 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
             edm.maybe_reinit_global_pg()
             if test_value == 1:
                 return
-            # assert edm.mesh_count == 2
+            assert edm.mesh_count == 2
             assert edm.global_pg.size() == global_world_size
 
-            # a = torch.arange(3) * (test_value + 1)
-            # sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
-            # dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
-            # assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
+            a = torch.arange(3) * (test_value + 1)
+            sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
+            dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
+            assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             dist.barrier(edm.global_pg)
 
@@ -155,13 +155,13 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             edm.maybe_reinit_global_pg()
-            # assert edm.mesh_count == 2
+            assert edm.mesh_count == 2
             assert edm.global_pg.size() == global_world_size
 
-            # a = torch.arange(3) * test_value
-            # sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
-            # dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
-            # assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
+            a = torch.arange(3) * test_value
+            sum_ints = global_world_size * (global_world_size + 1) // 2 + 100 - 2
+            dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
+            assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             dist.barrier(edm.global_pg)
 
@@ -186,7 +186,6 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
                         "GLOBAL_RANK": str(global_rank),
                         "GLOBAL_WORLD_SIZE": str(global_world_size),
                         "ZERO_BAND_LOG_LEVEL": "DEBUG",
-                        "ZERO_BAND_LOG_ALL_RANK": "true",
                         "TEST_VALUE": str(global_rank),
                     },
                 )

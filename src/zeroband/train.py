@@ -25,6 +25,7 @@ from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, 
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
+from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from zeroband.checkpoint import CkptManager, TrainingProgress
@@ -47,12 +48,19 @@ class OptimConfig(BaseConfig):
     batch_size: int = 512
 
 
+class MemoryProfilerConfig(BaseConfig):
+    freq: int = 10
+    snapshot_dir: str
+
+
 class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     sharding_strategy: str = "SHARD_GRAD_OP"
 
     log_model_hash: bool = False
+
+    memory_profiler: MemoryProfilerConfig | None = None
 
 
 class CkptConfig(BaseConfig):
@@ -193,6 +201,8 @@ def train(config: Config):
         metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
 
     gpu_mem_monitor = GPUMemoryMonitor()
+    if config.train.memory_profiler is not None:
+        memory_profiler = MemoryProfiler(config.train.memory_profiler.freq, config.train.memory_profiler.snapshot_dir)
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -279,6 +289,9 @@ def train(config: Config):
                 metric_logger.log(metrics)
 
             logger.info(log)
+
+            if memory_profiler is not None:
+                memory_profiler.step()
 
         if config.diloco is not None:
             if config.train.log_model_hash:

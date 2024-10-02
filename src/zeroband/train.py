@@ -52,8 +52,7 @@ class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     sharding_strategy: str = "SHARD_GRAD_OP"
-    ac_ckpt: bool = False
-
+    ac_ckpt: bool | int = False
     log_model_hash: bool = False
 
 
@@ -140,7 +139,8 @@ def train(config: Config):
     )
 
     if config.train.ac_ckpt:
-        apply_ac_ckpt(model)
+        num = 1 if isinstance(config.train.ac_ckpt, bool) else config.train.ac_ckpt
+        apply_ac_ckpt(model, num)
 
     elastic_device_mesh = ElasticDeviceMesh()
 

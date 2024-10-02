@@ -76,3 +76,8 @@ def test_multi_gpu_diloco_non_full_shard(strategy):
 def test_act_ckpt():
     num_gpus = [1, 2]
     _test_multi_gpu(num_gpus, "debug/normal.toml", extra_args=["--train.ac_ckpt"])
+
+
+def test_act_ckpt_num():
+    num_gpus = [1, 2]
+    _test_multi_gpu(num_gpus, "debug/normal.toml", extra_args=["--train.ac_ckpt", "2"])

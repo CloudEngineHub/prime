@@ -22,6 +22,7 @@ from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
 from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
@@ -51,6 +52,7 @@ class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     sharding_strategy: str = "SHARD_GRAD_OP"
+    ac_ckpt: bool = False
 
     log_model_hash: bool = False
 
@@ -136,6 +138,9 @@ def train(config: Config):
         model_config,
         config.data.seq_length,
     )
+
+    if config.train.ac_ckpt:
+        apply_ac_ckpt(model)
 
     elastic_device_mesh = ElasticDeviceMesh()
 

@@ -215,7 +215,7 @@ class CkptManager:
         if self.diloco_offloaded_param_list is not None:
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{world_info.diloco_rank}")
 
-        self.states = dcp.load(self.states, checkpoint_id=resume_ckpt_path)
+        dcp.load(self.states, checkpoint_id=resume_ckpt_path)
 
         # since we don't load the param list from the state dict as its the same as the model one we just copy
         if self.diloco_offloaded_param_list is not None:

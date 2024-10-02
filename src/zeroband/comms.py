@@ -1,19 +1,21 @@
 import sys
 import os
+import time
 from torch.distributed.device_mesh import init_device_mesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
 from datetime import timedelta
-import time
 from typing import List, Tuple, Optional
 from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
-
+import multiprocessing as mp
 
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
+HEARTBEAT_INTERVAL = 5  # Interval in seconds between heartbeats
+HEARTBEAT_TIMEOUT = 15  # Time in seconds after which a node is considered dead if no heartbeat is received
 
 
 class ElasticDeviceMesh:
@@ -54,10 +56,14 @@ class ElasticDeviceMesh:
         )
         self.local_pg = self.mesh.get_group("intranode")
 
+        # Start heartbeat
+        self._start_heartbeat()
+
         # Logging
         self._logger.info(f"global_pg size : {self.global_pg.size()}, local_pg size: {self.local_pg.size()}")
 
     def __del__(self):
+        self._stop_heartbeat()
         dist.destroy_process_group()
 
     def _init_global_store_and_status(self):
@@ -135,10 +141,6 @@ class ElasticDeviceMesh:
                     raise e
                 time.sleep(0.1)
 
-    def _get_assigned_global_rank_and_size(self) -> Tuple[int, int]:
-        """Get the assigned global rank from the leader."""
-        return
-
     def _init_global_pg(self) -> None:
         # Each rank gets its own global store with global rank 0 as the master
         time_start = time.perf_counter()
@@ -201,16 +203,58 @@ class ElasticDeviceMesh:
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )
 
+    def _start_heartbeat(self):
+        """Start sending heartbeats to the global store in a separate process."""
+        self._heartbeat_stop_event = mp.Event()
+        self._heartbeat_process = mp.Process(target=self._heartbeat_loop, args=(self._heartbeat_stop_event,))
+        self._heartbeat_process.start()
+
+    def _stop_heartbeat(self):
+        """Stop the heartbeat process."""
+        if hasattr(self, "_heartbeat_stop_event"):
+            self._heartbeat_stop_event.set()
+            self._heartbeat_process.join()
+
+    def _heartbeat_loop(self, stop_event):
+        """Continuously send heartbeats until stopped."""
+        while not stop_event.is_set():
+            self._send_heartbeat()
+            time.sleep(HEARTBEAT_INTERVAL)
+
+    def _send_heartbeat(self):
+        """Send a heartbeat to the global store."""
+        current_time = time.time()
+        self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
+
+    def _check_heartbeats(self) -> List[str]:
+        """Check heartbeats and return a list of nodes that have missed their heartbeats."""
+        dead_nodes = []
+        current_time = time.time()
+        for i in range(self.world_info.global_world_size):
+            try:
+                last_heartbeat = float(self.global_store.get(f"heartbeat_{i}").decode("utf-8"))
+                if current_time - last_heartbeat > HEARTBEAT_TIMEOUT:
+                    dead_nodes.append(i)
+            except dist.DistStoreError:
+                self._logger.warning(f"Node {i} has no heartbeat")
+        return dead_nodes
+
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes if there are joiners or leavers. Else, do nothing."""
         # Find joiners and leavers
         joiners, leavers = self._get_joiners_and_leavers()
+
+        # Check for dead nodes
+        dead_nodes = self._check_heartbeats()
+
         # If no joiners or leavers, no resolution needed
-        if len(joiners) == 0 and len(leavers) == 0:
+        if len(joiners) == 0 and len(leavers) == 0 and len(dead_nodes) == 0:
             return
 
         # Remap live ranks to smaller world_size caused by leavers
         leaving_ranks = {int(self.global_store.get(f"rank_{leaver_id}").decode("utf-8")) for leaver_id in leavers}
+        for i in dead_nodes:
+            leaving_ranks.add(i)
         live_ranks = [i for i in range(self.world_info.global_world_size) if i not in leaving_ranks]
         for i, rank in enumerate(live_ranks):
             self.global_store.set(f"rank_map_{rank}", str(i))

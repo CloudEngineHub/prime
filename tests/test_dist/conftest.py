@@ -38,17 +38,6 @@ def get_random_available_port():
 
 
 @pytest.fixture()
-def get_100_random_available_ports():
-    ports = []
-    for _ in range(100):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            ports.append(s.getsockname()[1])
-
-    return ports
-
-
-@pytest.fixture()
 def random_available_port():
     return get_random_available_port()
 

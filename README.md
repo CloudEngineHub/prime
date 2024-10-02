@@ -81,8 +81,13 @@ if you have a datasets error at the beginning of training try to use the followi
 ```
 HF_HUB_ETAG_TIMEOUT=500
 ```
+## On off ramping routines
+- For the first initialisation, all the GLOBAL env vars matter and will be used by the nodes to initialize.
+- When nodes join, only the `GLOBAL_ADDR` and `GLOBAL_PORT` matter. You still have to set `GLOBAL_RANK` and `GLOBAL_WORLD_SIZE` but they will be updated when the global pg initializes.
+- When a node wishes to offboard, it must call `edm._queue_leave()` and then `edm.maybe_reinit_global_pg()`. The mechanism is that it has to tell the master it is leaving and then join the the next `edm.maybe_reinit_global_pg()` in order to not deadlock the barrier for master's `_resolve_world()`. Jackmin is trying to change this behavior such that the leaving node can leave without having to `edm.maybe_reinit_global_pg()` or without `edm._queue_leave()` but they are required for now.
 
 ## Environment variables
+### Global Store Initialization
 | Environment Variable  | Description                                      | Default Value |
 |-----------------------|--------------------------------------------------|---------------|
 | `GLOBAL_UNIQUE_ID`    | Unique identifier worker in global store.        | `None`  |
@@ -90,4 +95,9 @@ HF_HUB_ETAG_TIMEOUT=500
 | `GLOBAL_PORT`         | Port number of the global store.                 | `None` |
 | `GLOBAL_WORLD_SIZE`   | The size of the global process group.            | `1` |
 | `GLOBAL_RANK`         | Rank of the process in the global process group. | `0` |
+
+### Global Store Configuration
+| Environment Variable  | Description                                      | Default Value |
+|-----------------------|--------------------------------------------------|---------------|
 | `ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS` | Number of seconds before the global store operations timeout | `300` |
+| `ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS` | Number of seconds between polls to the store when waiting for values | `0.1` |

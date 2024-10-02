@@ -62,7 +62,7 @@ class ElasticDeviceMesh:
 
     def _init_global_store_and_status(self):
         """Initialize the global store with mesh_count, joiner_0, leaver_0, and status. Also sets the global status."""
-        if self.world_info.global_rank == 0:
+        if self._global_leader:
             self.global_store.set("mesh_count", "0")
             self.global_store.set("joiner_0", "null")
             self.global_store.set("leaver_0", "null")
@@ -88,6 +88,7 @@ class ElasticDeviceMesh:
         for i in range(MAX_LEAVERS):
             leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
             if leaver_id == "null":
+                self._logger.debug(f"Queueing leaver {self.world_info.global_unique_id} at index {i}")
                 self.global_store.set(f"leaver_{i}", self.world_info.global_unique_id)
                 self.global_store.set(f"leaver_{i + 1}", "null")
                 break
@@ -147,6 +148,9 @@ class ElasticDeviceMesh:
             timeout=TCPSTORE_TIMEOUT,
             is_master=self._global_leader,
         )
+        self._logger.debug(
+            f"Global store created at {self.world_info.global_addr}:{self.world_info.global_port + self.world_info.rank}"
+        )
 
         # Initialize store values
         self._init_global_store_and_status()
@@ -157,6 +161,7 @@ class ElasticDeviceMesh:
             prefix_store = dist.PrefixStore("mesh_0", self.global_store)
         elif self.global_status == "running":  # Join path
             # Ask to join and then wait for the status to be "reinit"
+            self._logger.info("Waiting to join")
             self._queue_join()
             self._wait_for_status("reinit")
 
@@ -184,6 +189,10 @@ class ElasticDeviceMesh:
 
         # Setting instance variables
         self.leaving = False  # TODO: do we need this?
+        # This is to match the barrier in maybe_reinit_global_pg.
+        # We might be able to get away with only doing in joining path.
+        # Let's not risk it for now though.
+        dist.barrier(self.global_pg)
 
     def _resolve_world(self):
         """Set the new world size and ranks for all nodes if there are joiners or leavers. Else, do nothing."""
@@ -257,3 +266,5 @@ class ElasticDeviceMesh:
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
+        # Without this barrier, a node might queue leave before the leaving queue is cleared
+        dist.barrier(self.global_pg)

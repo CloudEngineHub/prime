@@ -13,7 +13,6 @@ import multiprocessing as mp
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
-MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
 HEARTBEAT_INTERVAL = 2  # Interval in seconds between heartbeats
 HEARTBEAT_TIMEOUT = 10  # Time in seconds after which a node is considered dead if no heartbeat is received
 
@@ -32,7 +31,6 @@ class ElasticDeviceMesh:
     - rank_{uuid}: The rank of the node with the given uuid
     - rank_map_{rank}: The new rank of the node with the given rank. Used to remap ranks when nodes leave.
     - joiner_{i}: The uuid of the ith joiner. Its a KV implmentation of a queue.
-    - leaver_{i}: The uuid of the ith leaver. Its a KV implmentation of a queue.
     """
 
     local_pg: dist.ProcessGroup
@@ -67,11 +65,10 @@ class ElasticDeviceMesh:
         dist.destroy_process_group()
 
     def _init_global_store_and_status(self):
-        """Initialize the global store with mesh_count, joiner_0, leaver_0, and status. Also sets the global status."""
+        """Initialize the global store with mesh_count, joiner_0, and status. Also sets the global status."""
         if self._global_leader:
             self.global_store.set("mesh_count", "0")
             self.global_store.set("joiner_0", "null")
-            self.global_store.set("leaver_0", "null")
             self.global_store.set("status", "init")
             self.global_status = "init"
         else:
@@ -88,37 +85,17 @@ class ElasticDeviceMesh:
         else:
             raise RuntimeError("Too many joiners")
 
-    def _queue_leave(self):
-        """Queue a node to leave the mesh."""
-        self.leaving = True
-        for i in range(MAX_LEAVERS):
-            leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
-            if leaver_id == "null":
-                self._logger.debug(f"Queueing leaver {self.world_info.global_unique_id} at index {i}")
-                self.global_store.set(f"leaver_{i}", self.world_info.global_unique_id)
-                self.global_store.set(f"leaver_{i + 1}", "null")
-                break
-        else:
-            raise RuntimeError("Too many leavers")
-
-    def _get_joiners_and_leavers(self) -> Tuple[List[str], List[str]]:
+    def _get_joiners(self) -> Tuple[List[str], List[str]]:
         joiners = []
-        leavers = []
         for i in range(MAX_JOINERS):
             joiner_id = self.global_store.get(f"joiner_{i}").decode("utf-8")
             if joiner_id == "null":
                 break
             joiners.append(joiner_id)
-        for i in range(MAX_LEAVERS):
-            leaver_id = self.global_store.get(f"leaver_{i}").decode("utf-8")
-            if leaver_id == "null":
-                break
-            leavers.append(leaver_id)
-        return joiners, leavers
+        return joiners
 
-    def _clear_joiners_and_leavers(self):
+    def _clear_joiners(self):
         self.global_store.set("joiner_0", "null")
-        self.global_store.set("leaver_0", "null")
 
     def _wait_for_status(self, status: Optional[str] = None) -> str:
         """Wait for status to be set in the store.
@@ -249,22 +226,20 @@ class ElasticDeviceMesh:
         return dead_nodes
 
     def _resolve_world(self):
-        """Set the new world size and ranks for all nodes if there are joiners or leavers. Else, do nothing."""
-        # Find joiners and leavers
-        joiners, leavers = self._get_joiners_and_leavers()
+        """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing."""
+        # Find joiners
+        joiners = self._get_joiners()
 
         # Check for dead nodes
         dead_nodes = self._check_heartbeats()
-        self._logger.debug(f"Joiners: {joiners}, Leavers: {leavers}, Dead nodes: {dead_nodes}")
+        self._logger.debug(f"Joiners: {joiners}, Dead nodes: {dead_nodes}")
 
-        # If no joiners or leavers, no resolution needed
-        if len(joiners) == 0 and len(leavers) == 0 and len(dead_nodes) == 0:
+        # If no joiners or dead nodes, no resolution needed
+        if len(joiners) == 0 and len(dead_nodes) == 0:
             return
 
-        # Remap live ranks to smaller world_size caused by leavers
-        leaving_ranks = {int(self.global_store.get(f"rank_{leaver_id}").decode("utf-8")) for leaver_id in leavers}
-        for i in dead_nodes:
-            leaving_ranks.add(i)
+        # Remap live ranks to smaller world_size caused by dead nodes
+        leaving_ranks = set(dead_nodes)
         live_ranks = [i for i in range(self.world_info.global_world_size) if i not in leaving_ranks]
         for i, rank in enumerate(live_ranks):
             self.global_store.set(f"rank_map_{rank}", str(i))
@@ -282,7 +257,7 @@ class ElasticDeviceMesh:
         self.global_store.set("status", "reinit")
 
     def maybe_reinit_global_pg(self):
-        """Reinitialize the global_pg if there are joiners or leavers."""
+        """Reinitialize the global_pg if there are joiners or dead nodes."""
         time_start = time.perf_counter()
         self._logger.debug("Resolving world")
         if self._global_leader:
@@ -296,7 +271,7 @@ class ElasticDeviceMesh:
         self._logger.debug("World resolved in %s seconds", time.perf_counter() - time_start)
 
         status = self.global_store.get("status").decode("utf-8")
-        if status == "running":  # No joiners or leavers
+        if status == "running":  # No joiners or dead nodes
             return
 
         # Reinit Path
@@ -330,7 +305,7 @@ class ElasticDeviceMesh:
         )
 
         if self._global_leader:
-            self._clear_joiners_and_leavers()
+            self._clear_joiners()
             self.global_store.set("status", "running")
 
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)

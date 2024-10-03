@@ -13,8 +13,12 @@ import multiprocessing as mp
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
-HEARTBEAT_INTERVAL = 2  # Interval in seconds between heartbeats
-HEARTBEAT_TIMEOUT = 10  # Time in seconds after which a node is considered dead if no heartbeat is received
+HEARTBEAT_INTERVAL = int(
+    os.getenv("ZERO_BAND_EDM_HEARTBEAT_INTERVAL_SECONDS", "2")
+)  # Interval in seconds between heartbeats
+HEARTBEAT_TIMEOUT = int(
+    os.getenv("ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS", "10")
+)  # Time in seconds after which a node is considered dead if no heartbeat is received
 
 
 class ElasticDeviceMesh:

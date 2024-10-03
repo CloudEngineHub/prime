@@ -206,11 +206,19 @@ class ElasticDeviceMesh:
     def _send_heartbeat(self):
         """Send a heartbeat to the global store."""
         current_time = time.time()
-        self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
+        try:
+            self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
+        except Exception:
+            pass
 
     def _send_deathrattle(self):
         """Send a deathrattle to the global store."""
-        self.global_store.set(f"heartbeat_{self.world_info.global_rank}", "-100")
+        if hasattr(self, "global_store"):
+            self.global_store.set(f"heartbeat_{self.world_info.global_rank}", "-100")
+        else:
+            import warnings
+
+            warnings.warn("global_store garbage collected. Skipping deathrattle.")
 
     def _check_heartbeats(self) -> List[str]:
         """Check heartbeats and return a list of nodes that have missed their heartbeats."""

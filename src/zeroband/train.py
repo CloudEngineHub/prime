@@ -69,13 +69,13 @@ class Config(BaseConfig):
 
     project: str = "zeroband"
     run_id: str | None = None
+    metric_logger_type: Literal["wandb", "dummy"] = "wandb"
 
     # sub config
     diloco: DilocoConfig | None = None
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
-    metric_logger_type: Literal["wandb", "dummy"] = "dummy"
     monitor: MonitorConfig = MonitorConfig()
 
 
@@ -164,11 +164,8 @@ def train(config: Config):
     model.train()
 
     if world_info.rank == 0:
-        if config.metric_logger_type == "wandb":
-            metric_logger_cls = WandbMetricLogger
-        else:
-            metric_logger_cls = DummyMetricLogger
-        metric_logger = metric_logger_cls(project=config.project, config=config.model_dump(), resume=False)
+        logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
+        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
 
         monitor = HttpMonitor(config=config.model_dump(), resume=False)
         monitor.set_stage("init")

@@ -1,3 +1,7 @@
+# Code adapted from https://github.com/PrimeIntellect-ai/hivemind/blob/213bff98a62accb91f254e2afdccbf1d69ebdea9/hivemind/compression/quantization.py
+# Original code is licensed under the MIT License.
+# See the LICENSE file in the original repository for more information.
+
 import torch
 import numpy as np
 from typing import Tuple

@@ -249,7 +249,7 @@ def test_elastic_device_mesh_on_off_crash(world_size: int, global_world_size: in
 
             if test_value == 1:
                 return
-            time.sleep(10)
+            time.sleep(2)
             edm.maybe_reinit_global_pg()
             assert edm.mesh_count == 2
             assert edm.global_pg.size() == global_world_size

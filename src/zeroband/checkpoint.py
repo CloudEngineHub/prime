@@ -123,6 +123,7 @@ class CkptManager:
         self._logger = get_logger()
 
         self.async_save_process: list[multiprocessing.Process] = []
+        self.threads_async_live_reco: list[threading.Thread] = []
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -239,35 +240,36 @@ class CkptManager:
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
     def live_ckpt_thread(self, global_pg: dist.ProcessGroup, dist_rank: int):
-        time_start = time.perf_counter()
-        self._logger.info(f"Starting live ckpt thread for rank {dist_rank}")
-
         def send_ckpt():
+            time_start = time.perf_counter()
+            self._logger.info(f"Starting live ckpt thread for rank {dist_rank}")
             for param in self.diloco_offloaded_param_list:
                 global_pg.send([param.data], dist_rank, 0).wait()
+            self._logger.info(
+                f"Finished live ckpt thread for rank {dist_rank} in {time.perf_counter() - time_start} seconds"
+            )
 
         thread = threading.Thread(target=send_ckpt)
+        self.threads_async_live_reco.append(thread)
         thread.start()
-        thread.join()
-        del thread
-
-        self._logger.info(
-            f"Finished live ckpt thread for rank {dist_rank} in {time.perf_counter() - time_start} seconds"
-        )
 
     def receive_live_ckpt(self, global_pg: dist.ProcessGroup, src_rank: int):
-        time_start = time.perf_counter()
-        self._logger.info(f"Starting live ckpt thread from rank {src_rank}")
-
         def recv_ckpt():
+            time_start = time.perf_counter()
+            self._logger.info(f"Starting live ckpt thread from rank {src_rank}")
             for param in self.diloco_offloaded_param_list:
                 global_pg.recv([param.data], src_rank, 0).wait()
 
-        thread = threading.Thread(target=recv_ckpt)
-        thread.start()
-        thread.join()
-        del thread
+            self._logger.info(
+                f"Finished live ckpt thread from rank {src_rank} in {time.perf_counter() - time_start} seconds"
+            )
 
-        self._logger.info(
-            f"Finished live ckpt thread from rank {src_rank} in {time.perf_counter() - time_start} seconds"
-        )
+        thread = threading.Thread(target=recv_ckpt)
+        self.threads_async_live_reco.append(thread)
+        thread.start()
+
+    def maybe_wait_for_live_ckpt(self):
+        """Wait for all thread started by receive or live reco to finish"""
+        for thread in self.threads_async_live_reco:
+            thread.join()
+            self.threads_async_live_reco = []

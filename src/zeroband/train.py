@@ -231,13 +231,11 @@ def train(config: Config):
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
-            if _inner_step == 2:
-                if world_info.global_rank == 0:
-                    ckpt_manager.live_ckpt_thread(elastic_device_mesh.global_pg, 1)
-                elif world_info.global_rank == 1:
-                    ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
-
-                logger.debug("Post sync param list cpu: %s", get_list_param_signature(diloco.param_list_cpu))
+            # if _inner_step == 2:
+            #     if world_info.global_rank == 0:
+            #         ckpt_manager.live_ckpt_thread(elastic_device_mesh.global_pg, 1)
+            #     elif world_info.global_rank == 1:
+            #         ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -312,6 +310,9 @@ def train(config: Config):
 
             if config.train.memory_profiler is not None:
                 memory_profiler.step()
+
+        ckpt_manager.maybe_wait_for_live_ckpt()
+        logger.debug("Post sync param list cpu: %s", get_list_param_signature(diloco.param_list_cpu))
 
         if config.diloco is not None:
             if config.train.log_model_hash:

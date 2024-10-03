@@ -15,7 +15,7 @@ TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTE
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
 HEARTBEAT_INTERVAL = 2  # Interval in seconds between heartbeats
-HEARTBEAT_TIMEOUT = 6  # Time in seconds after which a node is considered dead if no heartbeat is received
+HEARTBEAT_TIMEOUT = 10  # Time in seconds after which a node is considered dead if no heartbeat is received
 
 
 class ElasticDeviceMesh:
@@ -212,20 +212,28 @@ class ElasticDeviceMesh:
 
     def _stop_heartbeat(self):
         """Stop the heartbeat process."""
+        self._send_deathrattle()
         if hasattr(self, "_heartbeat_stop_event"):
             self._heartbeat_stop_event.set()
             self._heartbeat_process.join()
 
     def _heartbeat_loop(self, stop_event):
         """Continuously send heartbeats until stopped."""
-        while not stop_event.is_set():
-            self._send_heartbeat()
-            time.sleep(HEARTBEAT_INTERVAL)
+        try:
+            while not stop_event.is_set():
+                self._send_heartbeat()
+                time.sleep(HEARTBEAT_INTERVAL)
+        finally:
+            self._send_deathrattle()
 
     def _send_heartbeat(self):
         """Send a heartbeat to the global store."""
         current_time = time.time()
         self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
+
+    def _send_deathrattle(self):
+        """Send a deathrattle to the global store."""
+        self.global_store.set(f"heartbeat_{self.world_info.global_rank}", "-100")
 
     def _check_heartbeats(self) -> List[str]:
         """Check heartbeats and return a list of nodes that have missed their heartbeats."""

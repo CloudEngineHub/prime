@@ -40,12 +40,17 @@ def ring_allreduce(
     op: dist.ReduceOp = dist.ReduceOp.SUM,
     group: Optional[dist.ProcessGroup] = None,
     transfer_dtype: Optional[torch.dtype] = None,
+    quantization_func: Optional[Callable] = None,
 ) -> None:
     """
     Perform all-reduce on a tensor using ring algorithm.
     The accumulation will be done in-place on the input tensor.
     The transfers will be done using the specified transfer_dtype.
     """
+    if quantization_func is not None:
+        if transfer_dtype is not None:
+            raise ValueError("Quantization and transfer_dtype cannot be used together")
+        transfer_dtype = tensor.dtype
     if transfer_dtype is None:
         transfer_dtype = tensor.dtype
     if group is None:
@@ -64,8 +69,16 @@ def ring_allreduce(
 
     # Temporary buffers for transferring data
     num_buffers = BUFFER_COUNT * world_size
-    send_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
-    recv_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
+    if quantization_func is not None:
+        recv_buffer = [torch.empty_like(chunks[0], dtype=torch.uint8) for _ in range(BUFFER_COUNT)]
+        send_buffer = [None for _ in range(BUFFER_COUNT)]
+        send_lookup_buffer = [None for _ in range(BUFFER_COUNT)]
+        recv_lookup_buffer = [torch.empty(256, dtype=chunks[0].dtype) for _ in range(BUFFER_COUNT)]
+        send_lookup_work = [None for _ in range(BUFFER_COUNT)]
+        recv_lookup_work = [None for _ in range(BUFFER_COUNT)]
+    else:
+        recv_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
+        send_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
     send_work = [None] * BUFFER_COUNT
     recv_work = [None] * BUFFER_COUNT
 
@@ -77,11 +90,30 @@ def ring_allreduce(
         if send_work[step % BUFFER_COUNT] is not None:
             send_work[step % BUFFER_COUNT].wait()
             recv_work[step % BUFFER_COUNT].wait()
-            chunks[send_chunk].add_(recv_buffer[step % BUFFER_COUNT])
+            if quantization_func is not None:
+                send_lookup_work[step % BUFFER_COUNT].wait()
+                recv_lookup_work[step % BUFFER_COUNT].wait()
+                # print(recv_lookup_buffer[step % BUFFER_COUNT][recv_buffer[step % BUFFER_COUNT].long()])
+                chunks[send_chunk].add_(
+                    recv_lookup_buffer[step % BUFFER_COUNT][recv_buffer[step % BUFFER_COUNT].long()]
+                )
+            else:
+                chunks[send_chunk].add_(recv_buffer[step % BUFFER_COUNT])
 
         if step <= (world_size - 1) * BUFFER_COUNT:
             # Send and receive
-            send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
+            if quantization_func is not None:
+                send_buffer[step % BUFFER_COUNT], send_lookup_buffer[step % BUFFER_COUNT] = quantization_func(
+                    chunks[send_chunk]
+                )
+                send_lookup_work[step % BUFFER_COUNT] = dist.isend(
+                    send_lookup_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step + 1000
+                )
+                recv_lookup_work[step % BUFFER_COUNT] = dist.irecv(
+                    recv_lookup_buffer[step % BUFFER_COUNT], src=recv_rank, group=group, tag=step + 1000
+                )
+            else:
+                send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
             send_work[step % BUFFER_COUNT] = dist.isend(
                 send_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step
             )
@@ -93,6 +125,9 @@ def ring_allreduce(
         for i in range(BUFFER_COUNT):
             chunks[i + rank * BUFFER_COUNT].divide_(world_size)
 
+    if quantization_func is not None:
+        send_lookup_work = [None for _ in range(BUFFER_COUNT)]
+        recv_lookup_work = [None for _ in range(BUFFER_COUNT)]
     send_work = [None] * BUFFER_COUNT
     recv_work = [None] * BUFFER_COUNT
     for step in range(1, world_size * BUFFER_COUNT + 1):

@@ -125,9 +125,13 @@ def ring_allreduce(
         for i in range(BUFFER_COUNT):
             chunks[i + rank * BUFFER_COUNT].divide_(world_size)
 
+    # TODO: Maybe have an option to all gather in lower precision
+
     if quantization_func is not None:
         send_lookup_work = [None for _ in range(BUFFER_COUNT)]
         recv_lookup_work = [None for _ in range(BUFFER_COUNT)]
+    recv_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
+    send_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
     send_work = [None] * BUFFER_COUNT
     recv_work = [None] * BUFFER_COUNT
     for step in range(1, world_size * BUFFER_COUNT + 1):

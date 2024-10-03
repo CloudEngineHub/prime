@@ -24,7 +24,6 @@ from zeroband.comms import ElasticDeviceMesh
 from zeroband.utils import (
     GPUMemoryMonitor,
     PerfCounter,
-    get_list_param_signature,
     get_module_signature,
     get_sharding_strategy,
 )
@@ -205,6 +204,11 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
+    if world_info.global_rank == 1:
+        time.sleep(10)  # Faking the "it joins the training later behavior"
+        ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
+        ckpt_manager.maybe_wait_for_live_ckpt()
+
     model.train()
 
     if world_info.rank == 0:
@@ -231,11 +235,10 @@ def train(config: Config):
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
-            # if _inner_step == 2:
-            #     if world_info.global_rank == 0:
-            #         ckpt_manager.live_ckpt_thread(elastic_device_mesh.global_pg, 1)
-            #     elif world_info.global_rank == 1:
-            #         ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
+            if dest_rank := elastic_device_mesh.should_send_live_ckpt() is not None:
+                # todo this whole checking process could be async
+                if world_info.global_rank == 0:
+                    ckpt_manager.send_live_ckpt(elastic_device_mesh.global_pg, dest_rank)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -312,7 +315,6 @@ def train(config: Config):
                 memory_profiler.step()
 
         ckpt_manager.maybe_wait_for_live_ckpt()
-        logger.debug("Post sync param list cpu: %s", get_list_param_signature(diloco.param_list_cpu))
 
         if config.diloco is not None:
             if config.train.log_model_hash:

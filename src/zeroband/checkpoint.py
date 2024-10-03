@@ -21,6 +21,7 @@ from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
 )
 from torch.distributed.checkpoint.stateful import Stateful
+from zeroband.utils import get_list_param_signature
 from zeroband.utils.logging import get_logger
 import warnings
 import logging
@@ -239,14 +240,19 @@ class CkptManager:
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def live_ckpt_thread(self, global_pg: dist.ProcessGroup, dist_rank: int):
+    def send_live_ckpt(self, global_pg: dist.ProcessGroup, dest_rank: int):
         def send_ckpt():
             time_start = time.perf_counter()
-            self._logger.info(f"Starting live ckpt thread for rank {dist_rank}")
+            self._logger.info(f"Starting live ckpt thread for rank {dest_rank}")
             for param in self.diloco_offloaded_param_list:
-                global_pg.send([param.data], dist_rank, 0).wait()
+                global_pg.send([param.data], dest_rank, 0).wait()
+
+            self._logger.debug(
+                "Post sync param list cpu: %s", get_list_param_signature(self.diloco_offloaded_param_list)
+            )
+
             self._logger.info(
-                f"Finished live ckpt thread for rank {dist_rank} in {time.perf_counter() - time_start} seconds"
+                f"Finished live ckpt thread for rank {dest_rank} in {time.perf_counter() - time_start} seconds"
             )
 
         thread = threading.Thread(target=send_ckpt)
@@ -259,6 +265,10 @@ class CkptManager:
             self._logger.info(f"Starting live ckpt thread from rank {src_rank}")
             for param in self.diloco_offloaded_param_list:
                 global_pg.recv([param.data], src_rank, 0).wait()
+
+            self._logger.debug(
+                "Post sync param list cpu: %s", get_list_param_signature(self.diloco_offloaded_param_list)
+            )
 
             self._logger.info(
                 f"Finished live ckpt thread from rank {src_rank} in {time.perf_counter() - time_start} seconds"

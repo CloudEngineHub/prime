@@ -185,6 +185,8 @@ class ElasticDeviceMesh:
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )
 
+        self._counter = 0
+
     def _start_heartbeat(self):
         """Start sending heartbeats to the global store in a separate process."""
         self._heartbeat_stop_event = mp.Event()
@@ -325,3 +327,14 @@ class ElasticDeviceMesh:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         # Without this barrier, a node might queue leave before the leaving queue is cleared
         dist.barrier(self.global_pg)
+
+    def should_send_live_ckpt(self) -> int | None:
+        """Return the rank to send the live ckpt to and None if not needed to send.
+        Will return None most of the time
+        """
+
+        self._counter += 1
+        if self._counter == 5:
+            self._logger.debug("should send live ckpt")
+            return 1
+        return None

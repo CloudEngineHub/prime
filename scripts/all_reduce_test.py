@@ -6,12 +6,29 @@ import torch.utils.benchmark as benchmark
 from zeroband.collectives import AllReduceBackend, ALL_REDUCE_FN
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
+from typing import Optional
+from enum import Enum
+
+
+class TorchDtype(str, Enum):
+    FLOAT32 = "float32"
+    FLOAT16 = "float16"
+    UINT8 = "uint8"
+
+
+TORCH_DTYPE_MAP = {
+    None: None,
+    TorchDtype.FLOAT32: torch.float32,
+    TorchDtype.FLOAT16: torch.float16,
+    TorchDtype.UINT8: torch.uint8,
+}
 
 
 class Config(BaseConfig):
     size_model: int = int(1e9)
     n_iters: int = 5
     backend: AllReduceBackend = AllReduceBackend.GLOO
+    transfer_dtype: Optional[TorchDtype] = None
 
 
 def main(config: Config):
@@ -24,8 +41,22 @@ def main(config: Config):
     )
 
     all_reduce = ALL_REDUCE_FN[config.backend]
+    transfer_dtype = TORCH_DTYPE_MAP[config.transfer_dtype]
 
-    t0 = benchmark.Timer(stmt="all_reduce(mat)", globals={"all_reduce": all_reduce, "mat": mat})
+    if config.transfer_dtype is not None and transfer_dtype.is_floating_point:
+        t0 = benchmark.Timer(
+            stmt="all_reduce(mat, transfer_dtype=transfer_dtype)",
+            globals={"all_reduce": all_reduce, "mat": mat, "transfer_dtype": transfer_dtype},
+        )
+    elif config.transfer_dtype is not None and torch.uint8:
+        from zeroband.compression import uniform_8bit_quantize
+
+        t0 = benchmark.Timer(
+            stmt="all_reduce(mat, quantization_func=foo)",
+            globals={"all_reduce": all_reduce, "mat": mat, "foo": uniform_8bit_quantize},
+        )
+    else:
+        t0 = benchmark.Timer(stmt="all_reduce(mat)", globals={"all_reduce": all_reduce, "mat": mat})
     measured_time = t0.timeit(config.n_iters).mean
 
     bandwidth = config.size_model * 4 / 1e9 / measured_time

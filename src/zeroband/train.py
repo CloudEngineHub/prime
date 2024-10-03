@@ -22,7 +22,8 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
 
 from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
-from zeroband.utils.monitor import WandbMonitor, DummyMonitor, HttpMonitor
+from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
+from zeroband.utils.monitor import HttpMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
@@ -55,9 +56,8 @@ class TrainConfig(BaseConfig):
 
 
 class MonitorConfig(BaseConfig):
-    type: Literal["wandb", "dummy", "http"]
+    enable_monitor: bool = False
     log_flush_interval: int = 10
-    # for http monitor
     base_url: str | None = None
     auth_token: str | None = None
 
@@ -75,7 +75,8 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
-    monitor: MonitorConfig = MonitorConfig(type="wandb")
+    metric_logger_type: Literal["wandb", "dummy"] = "dummy"
+    monitor: MonitorConfig = MonitorConfig()
 
 
 def train(config: Config):
@@ -163,14 +164,14 @@ def train(config: Config):
     model.train()
 
     if world_info.rank == 0:
-        if config.monitor.type == "wandb":
-            monitor_cls = WandbMonitor
-        elif config.monitor.type == "http":
-            monitor_cls = HttpMonitor
+        if config.metric_logger_type == "wandb":
+            metric_logger_cls = WandbMetricLogger
         else:
-            monitor_cls = DummyMonitor
-        monitor = monitor_cls(project=config.project, config=config.model_dump(), resume=False)
-    monitor.set_stage("init")
+            metric_logger_cls = DummyMetricLogger
+        metric_logger = metric_logger_cls(project=config.project, config=config.model_dump(), resume=False)
+
+        monitor = HttpMonitor(config=config.model_dump(), resume=False)
+        monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -184,7 +185,9 @@ def train(config: Config):
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {outer_step}")
 
-        monitor.set_stage("inner_loop")
+        if world_info.rank == 0:
+            monitor.set_stage("inner_loop")
+
         for inner_step in range(num_inner_steps):
             loss_batch = 0
 
@@ -244,12 +247,14 @@ def train(config: Config):
                 log += f", diloco_peers: {metrics['num_peers']}"
 
             if world_info.rank == 0:
+                metric_logger.log(metrics)
                 monitor.log(metrics)
 
             logger.info(log)
 
         if config.diloco is not None:
-            monitor.set_stage("outer_loop")
+            if world_info.rank == 0:
+                monitor.set_stage("outer_loop")
             diloco.step(model)
 
         outer_step += 1
@@ -261,8 +266,8 @@ def train(config: Config):
             break
 
     if world_info.rank == 0:
-        monitor.set_stage("finishing")
         monitor.finish()
+        metric_logger.finish()
 
 
 if __name__ == "__main__":

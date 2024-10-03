@@ -1,8 +1,6 @@
 name_model = "150M"
 project = "debug_150m_zero_band"
-
-[monitor]
-type = "dummy"
+metric_logger_type = "dummy"
 
 [train]
 micro_bs = 16 # change this base on the gpu

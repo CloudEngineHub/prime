@@ -1,13 +1,11 @@
-import pickle
-from typing import Any, Protocol
-import importlib
+from typing import Any
 from zeroband.utils.logging import get_logger
 import aiohttp
 from aiohttp import ClientError
 import asyncio
 
 
-async def get_external_ip(max_retries=3, retry_delay=5):
+async def _get_external_ip(max_retries=3, retry_delay=5):
     async with aiohttp.ClientSession() as session:
         for attempt in range(max_retries):
             try:
@@ -20,16 +18,6 @@ async def get_external_ip(max_retries=3, retry_delay=5):
     return None
 
 
-class Monitor(Protocol):
-    def __init__(self, project, config): ...
-
-    def log(self, metrics: dict[str, Any]): ...
-
-    def set_stage(self, stage: str): ...
-
-    def finish(self): ...
-
-
 class HttpMonitor:
     """
     Logs the status of nodes, and training progress to an API
@@ -37,6 +25,7 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
+        self.enabled = config["monitor"]["enabled"]
         self.log_flush_interval = config["monitor"]["log_flush_interval"]
         self.base_url = config["monitor"]["base_url"]
         self.auth_token = config["monitor"]["auth_token"]
@@ -61,6 +50,9 @@ class HttpMonitor:
         self.data = unique_logs
 
     def set_stage(self, stage: str):
+        if not self.enabled:
+            return
+
         import time
 
         # add a new log entry with the stage name
@@ -68,6 +60,9 @@ class HttpMonitor:
         self._handle_send_batch(flush=True)  # it's useful to have the most up-to-date stage broadcasted
 
     def log(self, data: dict[str, Any]):
+        if not self.enabled:
+            return
+    
         # Lowercase the keys in the data dictionary
         lowercased_data = {k.lower(): v for k, v in data.items()}
         self.data.append(lowercased_data)
@@ -83,7 +78,7 @@ class HttpMonitor:
 
     async def _set_node_ip_address(self):
         if self.node_ip_address is None and self.node_ip_address_fetch_status != "failed":
-            ip_address = await get_external_ip()
+            ip_address = await _get_external_ip()
             if ip_address is None:
                 self._logger.error("Failed to get external IP address")
                 # set this to "failed" so we keep trying again
@@ -95,19 +90,20 @@ class HttpMonitor:
     async def _send_batch(self):
         import aiohttp
 
-        await self._set_node_ip_address()
         self._remove_duplicates()
+        await self._set_node_ip_address()
 
         batch = self.data[:self.log_flush_interval]
+        # set node_ip_address of batch
+        batch = [{**log, "node_ip_address": self.node_ip_address} for log in batch]
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.auth_token}"
         }
         payload = {
-            "node_ip_address": self.node_ip_address,
             "logs": batch
         }
-        api = f"{self.base_url}/training_runs/{self.run_id}/logs"
+        api = f"{self.base_url}/metrics/{self.run_id}/logs"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -125,7 +121,7 @@ class HttpMonitor:
         import requests
 
         headers = {"Content-Type": "application/json"}
-        api = f"{self.base_url}/training_runs/{self.run_id}/finish"
+        api = f"{self.base_url}/metrics/{self.run_id}/finish"
         try:
             response = requests.post(api, headers=headers)
             response.raise_for_status()
@@ -135,54 +131,13 @@ class HttpMonitor:
             return False
 
     def finish(self):
+        if not self.enabled:
+            return
+        
+        self.set_stage("finishing")
+
         # Send any remaining logs
         while self.data:
             self._send_batch()
 
         self._finish()
-
-
-class WandbMonitor:
-    def __init__(self, project, config, resume: bool):
-        if importlib.util.find_spec("wandb") is None:
-            raise ImportError("wandb is not installed. Please install it to use WandbMonitor.")
-
-        import wandb
-
-        wandb.init(
-            project=project, config=config, resume="auto" if resume else None
-        )  # make wandb reuse the same run id if possible
-
-    def log(self, metrics: dict[str, Any]):
-        import wandb
-
-        wandb.log(metrics)
-
-    def set_stage(self, stage: str):
-        # no-op
-        pass
-
-    def finish(self):
-        import wandb
-
-        wandb.finish()
-
-
-class DummyMonitor:
-    def __init__(self, project, config, *args, **kwargs):
-        self.project = project
-        self.config = config
-        open(project, "a").close()  # Create an empty file at the project path
-
-        self.data = []
-
-    def log(self, metrics: dict[str, Any]):
-        self.data.append(metrics)
-
-    def set_stage(self, stage: str):
-        # no-op
-        pass
-
-    def finish(self):
-        with open(self.project, "wb") as f:
-            pickle.dump(self.data, f)

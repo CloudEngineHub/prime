@@ -14,8 +14,8 @@ TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEO
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 MAX_LEAVERS = 100  # Maximum number of nodes that can leave in a single reinit
-HEARTBEAT_INTERVAL = 5  # Interval in seconds between heartbeats
-HEARTBEAT_TIMEOUT = 15  # Time in seconds after which a node is considered dead if no heartbeat is received
+HEARTBEAT_INTERVAL = 2  # Interval in seconds between heartbeats
+HEARTBEAT_TIMEOUT = 6  # Time in seconds after which a node is considered dead if no heartbeat is received
 
 
 class ElasticDeviceMesh:
@@ -114,7 +114,6 @@ class ElasticDeviceMesh:
             if leaver_id == "null":
                 break
             leavers.append(leaver_id)
-        self._logger.debug(f"Joiners: {joiners}, Leavers: {leavers}")
         return joiners, leavers
 
     def _clear_joiners_and_leavers(self):
@@ -190,6 +189,7 @@ class ElasticDeviceMesh:
         # Update global store values
         if self._global_leader:
             self.global_store.set("status", "running")
+            self.global_store.set("resolved_time", str(time.time()))
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
 
@@ -199,6 +199,7 @@ class ElasticDeviceMesh:
         # We might be able to get away with only doing in joining path.
         # Let's not risk it for now though.
         dist.barrier(self.global_pg)
+        self._last_resolved_time = self.global_store.get("resolved_time").decode("utf-8")
         self._logger.info(
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )
@@ -246,6 +247,7 @@ class ElasticDeviceMesh:
 
         # Check for dead nodes
         dead_nodes = self._check_heartbeats()
+        self._logger.debug(f"Joiners: {joiners}, Leavers: {leavers}, Dead nodes: {dead_nodes}")
 
         # If no joiners or leavers, no resolution needed
         if len(joiners) == 0 and len(leavers) == 0 and len(dead_nodes) == 0:
@@ -273,9 +275,18 @@ class ElasticDeviceMesh:
 
     def maybe_reinit_global_pg(self):
         """Reinitialize the global_pg if there are joiners or leavers."""
+        time_start = time.perf_counter()
+        self._logger.debug("Resolving world")
         if self._global_leader:
             self._resolve_world()
-        dist.barrier(self.global_pg)
+            self.global_store.set("resolved_time", str(time.time()))
+        else:
+            while (ans := self.global_store.get("resolved_time").decode("utf-8")) == self._last_resolved_time:
+                time.sleep(TCPSTORE_POLLING_INTERVAL)
+            self._last_resolved_time = ans
+
+        self._logger.debug("World resolved in %s seconds", time.perf_counter() - time_start)
+
         status = self.global_store.get("status").decode("utf-8")
         if status == "running":  # No joiners or leavers
             return

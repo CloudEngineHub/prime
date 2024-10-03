@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import gc
 import multiprocessing
 import os
+import threading
 import time
 from typing import Any
 from fsspec.generic import rsync as rsync_fsspec
@@ -11,6 +12,7 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torchdata.stateful_dataloader import StatefulDataLoader
 import torch.distributed.checkpoint as dcp
+import torch.distributed as dist
 from torch.distributed.checkpoint.state_dict import (
     set_optimizer_state_dict,
     set_model_state_dict,
@@ -235,3 +237,37 @@ class CkptManager:
         self._init_state()
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+    def live_ckpt_thread(self, global_pg: dist.ProcessGroup, dist_rank: int):
+        time_start = time.perf_counter()
+        self._logger.info(f"Starting live ckpt thread for rank {dist_rank}")
+
+        def send_ckpt():
+            for param in self.diloco_offloaded_param_list:
+                global_pg.send([param.data], dist_rank, 0).wait()
+
+        thread = threading.Thread(target=send_ckpt)
+        thread.start()
+        thread.join()
+        del thread
+
+        self._logger.info(
+            f"Finished live ckpt thread for rank {dist_rank} in {time.perf_counter() - time_start} seconds"
+        )
+
+    def receive_live_ckpt(self, global_pg: dist.ProcessGroup, src_rank: int):
+        time_start = time.perf_counter()
+        self._logger.info(f"Starting live ckpt thread from rank {src_rank}")
+
+        def recv_ckpt():
+            for param in self.diloco_offloaded_param_list:
+                global_pg.recv([param.data], src_rank, 0).wait()
+
+        thread = threading.Thread(target=recv_ckpt)
+        thread.start()
+        thread.join()
+        del thread
+
+        self._logger.info(
+            f"Finished live ckpt thread from rank {src_rank} in {time.perf_counter() - time_start} seconds"
+        )

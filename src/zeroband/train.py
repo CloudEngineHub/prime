@@ -21,7 +21,13 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils import (
+    GPUMemoryMonitor,
+    PerfCounter,
+    get_list_param_signature,
+    get_module_signature,
+    get_sharding_strategy,
+)
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
@@ -214,6 +220,7 @@ def train(config: Config):
     num_inner_steps = config.diloco.inner_steps if config.diloco is not None else 1
     perf_counter = PerfCounter(window_size=10)
 
+    logger.info(f"diloco / gobal rank {world_info.global_rank}")
     logger.info("starting training")
     while True:
         if num_inner_steps > 1:
@@ -223,6 +230,14 @@ def train(config: Config):
         time_start_outer = time.perf_counter()
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
+
+            if _inner_step == 2:
+                if world_info.global_rank == 0:
+                    ckpt_manager.live_ckpt_thread(elastic_device_mesh.global_pg, 1)
+                elif world_info.global_rank == 1:
+                    ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
+
+                logger.debug("Post sync param list cpu: %s", get_list_param_signature(diloco.param_list_cpu))
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1

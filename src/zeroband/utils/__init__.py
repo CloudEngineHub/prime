@@ -126,6 +126,11 @@ def get_module_signature(module: torch.nn.Module, compress: bool = True) -> str:
         return "\n".join(f"{name}: {sig}" for name, sig in state_dict_sig.items())
 
 
+def get_list_param_signature(model: list[torch.nn.Parameter]) -> list[str]:
+    state_dict_sig = {str(i): get_tensor_signature(param) for i, param in enumerate(model)}
+    return hashlib.md5(str(state_dict_sig).encode("utf-8")).hexdigest()
+
+
 class GPUMemoryMonitor:
     # inspired from https://github.com/pytorch/torchtitan/blob/eef8bb2b1b6f0875ab0581079e1511d51654910e/torchtitan/metrics.py#L32
     def __init__(self, device: str = "cuda"):

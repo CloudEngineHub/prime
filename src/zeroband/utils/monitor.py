@@ -25,7 +25,7 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.enabled = config["monitor"]["enabled"]
+        self.enabled = config["monitor"]["enable_monitor"]
         self.log_flush_interval = config["monitor"]["log_flush_interval"]
         self.base_url = config["monitor"]["base_url"]
         self.auth_token = config["monitor"]["auth_token"]

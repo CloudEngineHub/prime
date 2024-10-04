@@ -175,7 +175,6 @@ class ElasticDeviceMesh:
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
 
-        self.live_recovery = LiveRecovery(self.global_store)
         # Setting instance variables
         self.leaving = False  # TODO: do we need this?
         # This is to match the barrier in maybe_reinit_global_pg.
@@ -183,6 +182,8 @@ class ElasticDeviceMesh:
         # Let's not risk it for now though.
         dist.barrier(self.global_pg)
         self._last_resolved_time = self.global_store.get("resolved_time").decode("utf-8")
+        self.live_recovery = LiveRecovery(self.global_store)
+
         self._logger.info(
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )

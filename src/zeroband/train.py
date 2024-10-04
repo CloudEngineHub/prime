@@ -204,7 +204,7 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
-    if world_info.global_rank == 1:
+    if world_info.global_rank == 2:
         live_recovery_src = elastic_device_mesh.live_recovery.get_src()
         ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, live_recovery_src)
         ckpt_manager.maybe_wait_for_live_ckpt()
@@ -242,7 +242,8 @@ def train(config: Config):
                     callback=elastic_device_mesh.live_recovery.live_ckpt_done_callback(),
                 )
 
-            time.sleep(2)
+            if training_progress.outer_step > 1:
+                time.sleep(2)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -350,6 +351,8 @@ def train(config: Config):
             logger.info(f"effective mfu: {mfu}")
 
         logger.info(f"outer step peak gpu stats: {gpu_mem_monitor.format_peak_states()}")
+
+        elastic_device_mesh.maybe_reinit_global_pg()  # todo decide where to put this little guy
 
         if training_progress.step >= config.optim.total_steps:
             # we only allow to break outisde of the inner loop.

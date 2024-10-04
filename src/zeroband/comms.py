@@ -275,6 +275,9 @@ class ElasticDeviceMesh:
         """Reinitialize the global_pg if there are joiners or dead nodes."""
         time_start = time.perf_counter()
         self._logger.debug("Resolving world")
+
+        self.live_recovery.stop_background_loop()  # need to stop live recovery loop to avoid deadlocks
+
         if self._global_leader:
             self._resolve_world()
             self.global_store.set("resolved_time", str(time.time()))
@@ -328,6 +331,8 @@ class ElasticDeviceMesh:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         # Without this barrier, a node might queue leave before the leaving queue is cleared
         dist.barrier(self.global_pg)
+
+        self.live_recovery.init_background_loop()
 
 
 class LiveRecoveryModel(BaseModel):
@@ -385,17 +390,23 @@ class LiveRecovery:
         self.live_ckpt_store = LiveRecoveryStore(dist.PrefixStore("live_ckpt", self.global_store))
         self.live_ckpt_store.set(self._live_recovery_key, None)
 
-        self._stop_event = mp.Event()
         self._dest_rank = mp.Value("i", -1)
 
+        self.init_background_loop()
+
+    def init_background_loop(self) -> mp.Process:
+        self._stop_event = mp.Event()
         self._live_recovery_process = mp.Process(
             target=self._live_recovery_loop, args=(self._stop_event, self._dest_rank)
         )
         self._live_recovery_process.start()
 
-    def __del__(self):
+    def stop_background_loop(self):
         self._stop_event.set()
         self._live_recovery_process.join()
+
+    def __del__(self):
+        self.stop_background_loop()
 
     def _live_recovery_loop(self, stop_event: mp.Event, dest_rank: mp.Value) -> None:
         while not stop_event.is_set():

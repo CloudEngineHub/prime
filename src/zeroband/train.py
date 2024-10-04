@@ -1,6 +1,7 @@
 import os
 from contextlib import nullcontext
 from typing import Literal
+import time
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
@@ -21,7 +22,8 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig, ElasticDeviceMesh
 
 from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
-from zeroband.utils.monitor import WandbMonitor, DummyMonitor
+from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
+from zeroband.utils.monitor import HttpMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.world_info import get_world_info
@@ -53,12 +55,19 @@ class TrainConfig(BaseConfig):
     log_model_hash: bool = False
 
 
+class MonitorConfig(BaseConfig):
+    log_flush_interval: int = 10
+    base_url: str | None = None
+    auth_token: str | None = None
+
+
 class Config(BaseConfig):
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
     type_model: Literal["llama2", "llama3"] = "llama2"
 
     project: str = "zeroband"
+    run_id: str | None = None
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
 
     # sub config
@@ -66,6 +75,7 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
+    monitor: MonitorConfig | None = None
 
 
 def train(config: Config):
@@ -153,8 +163,12 @@ def train(config: Config):
     model.train()
 
     if world_info.rank == 0:
-        logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
+        logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
         metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
+
+        if config.monitor is not None:
+            monitor = HttpMonitor(config=config.model_dump(), resume=False)
+            monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -167,6 +181,9 @@ def train(config: Config):
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {outer_step}")
+
+        if world_info.rank == 0 and config.monitor is not None:
+            monitor.set_stage("inner_loop")
 
         for inner_step in range(num_inner_steps):
             loss_batch = 0
@@ -209,6 +226,7 @@ def train(config: Config):
                 "inner_lr": inner_lr,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": real_step * config.optim.batch_size * config.data.seq_length,
+                "time": time.time(),
             }
             log = f"step: {real_step}, loss: {loss_batch.item():.4f}"
 
@@ -227,10 +245,14 @@ def train(config: Config):
 
             if world_info.rank == 0:
                 metric_logger.log(metrics)
+                if config.monitor is not None:
+                    monitor.log(metrics)
 
             logger.info(log)
 
         if config.diloco is not None:
+            if world_info.rank == 0 and config.monitor is not None:
+                monitor.set_stage("outer_loop")
             diloco.step(model)
 
         outer_step += 1
@@ -243,6 +265,8 @@ def train(config: Config):
 
     if world_info.rank == 0:
         metric_logger.finish()
+        if config.monitor is not None:
+            monitor.finish()
 
 
 if __name__ == "__main__":

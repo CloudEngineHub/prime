@@ -25,7 +25,6 @@ class HttpMonitor:
 
     def __init__(self, config, *args, **kwargs):
         self.data = []
-        self.enabled = config["monitor"]["enable_monitor"]
         self.log_flush_interval = config["monitor"]["log_flush_interval"]
         self.base_url = config["monitor"]["base_url"]
         self.auth_token = config["monitor"]["auth_token"]
@@ -50,9 +49,6 @@ class HttpMonitor:
         self.data = unique_logs
 
     def set_stage(self, stage: str):
-        if not self.enabled:
-            return
-
         import time
 
         # add a new log entry with the stage name
@@ -60,9 +56,6 @@ class HttpMonitor:
         self._handle_send_batch(flush=True)  # it's useful to have the most up-to-date stage broadcasted
 
     def log(self, data: dict[str, Any]):
-        if not self.enabled:
-            return
-    
         # Lowercase the keys in the data dictionary
         lowercased_data = {k.lower(): v for k, v in data.items()}
         self.data.append(lowercased_data)
@@ -131,9 +124,6 @@ class HttpMonitor:
             return False
 
     def finish(self):
-        if not self.enabled:
-            return
-        
         self.set_stage("finishing")
 
         # Send any remaining logs

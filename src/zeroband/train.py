@@ -238,13 +238,17 @@ def train(config: Config):
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
-            potential_dest_rank = elastic_device_mesh.live_recovery.start_live_ckpt()
-            if potential_dest_rank is not None:
-                dest_rank = potential_dest_rank
-                ckpt_manager.send_live_ckpt(
-                    global_pg=elastic_device_mesh.global_pg,
-                    dest_rank=dest_rank,
-                )
+            if (
+                training_progress.outer_step > 0 or _inner_step > 0
+            ):  # todo(sami): this if statement is just here for testing, when we send live ckpt before the first step.
+                # in practice it never happens
+                potential_dest_rank = elastic_device_mesh.live_recovery.start_live_ckpt()
+                if potential_dest_rank is not None:
+                    dest_rank = potential_dest_rank
+                    ckpt_manager.send_live_ckpt(
+                        global_pg=elastic_device_mesh.global_pg,
+                        dest_rank=dest_rank,
+                    )
 
             time.sleep(0.5)
 

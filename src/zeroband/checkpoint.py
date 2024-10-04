@@ -262,6 +262,33 @@ class CkptManager:
                 "Post sync param list cpu: %s", get_list_param_signature(self.diloco_offloaded_param_list)
             )
 
+            # todo(sami): the optimizer part is ugly, should rather use state dict abstraction
+            if not send:
+                # preinit of the opt to avoid empty received buffer
+                _pre_step_optimizer(self.diloco_offloaded_optimizer, self.diloco_offloaded_param_list)
+
+            opt_state = _get_optimizer_list_data(self.diloco_offloaded_optimizer)
+            for stats in opt_state:
+                comm_fn([stats], rank, 0).wait()
+
+            self._logger.debug("Post sync nesterov optimizer state: %s", get_list_param_signature(opt_state))
+
+            if not send:
+                # preinit of the opt to avoid empty received buffer
+                _pre_step_optimizer(self.optimizer, self.model.parameters())
+
+            opt_state_adam = _get_optimizer_list_data(self.optimizer)
+            for stats in opt_state_adam:
+                if send:
+                    stats = stats.to("cpu")
+                    global_pg.send([stats], rank, 0).wait()
+                else:
+                    stat_recv = torch.empty_like(stats).to("cpu")
+                    global_pg.recv([stat_recv], rank, 0).wait()
+                    stats.copy_(stat_recv)
+
+            self._logger.debug("Post sync adam state: %s", get_list_param_signature(opt_state_adam))
+
             self._logger.info(
                 f"Finished live ckpt thread {send_or_recv} {rank} in {time.perf_counter() - time_start} seconds"
             )
@@ -275,3 +302,30 @@ class CkptManager:
         for thread in self.threads_async_live_reco:
             thread.join()
             self.threads_async_live_reco = []
+
+
+def _pre_step_optimizer(optimizer: Optimizer, parameters: list[nn.Parameter]):
+    """
+    Pre step optimizer to avoid race condition
+    """
+    for param in parameters:
+        param.grad = torch.zeros_like(param.data)
+
+    # todo(sami): check lr etcc
+    optimizer.step()
+
+
+def _get_optimizer_list_data(optimizer: Optimizer) -> list[torch.Tensor]:
+    """
+    Get the list of optimizer data from the optimizer state dict
+    """
+    list_data = []
+    for group in optimizer.param_groups:
+        for p in group["params"]:
+            if p in optimizer.state:
+                state = optimizer.state[p]
+                for key in state.keys():
+                    if isinstance(state[key], torch.Tensor):
+                        if len(state[key].shape) > 0:
+                            list_data.append(state[key])
+    return list_data

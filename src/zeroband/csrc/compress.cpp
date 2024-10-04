@@ -144,7 +144,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("inplace") = true
     )
     .def(
-        "quantize_per_tensor",
+        "quantize_per_tensor_uint8",
         &quantize_per_tensor_multithreaded,
         "Faster torch::quantize_per_tensor",
         py::arg("tensor"),

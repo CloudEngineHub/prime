@@ -241,40 +241,32 @@ class CkptManager:
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
     def send_live_ckpt(self, global_pg: dist.ProcessGroup, dest_rank: int):
-        def send_ckpt():
-            time_start = time.perf_counter()
-            self._logger.info(f"Starting live ckpt thread for rank {dest_rank}")
-            for param in self.diloco_offloaded_param_list:
-                global_pg.send([param.data], dest_rank, 0).wait()
-
-            self._logger.debug(
-                "Post sync param list cpu: %s", get_list_param_signature(self.diloco_offloaded_param_list)
-            )
-
-            self._logger.info(
-                f"Finished live ckpt thread for rank {dest_rank} in {time.perf_counter() - time_start} seconds"
-            )
-
-        thread = threading.Thread(target=send_ckpt)
-        self.threads_async_live_reco.append(thread)
-        thread.start()
+        self._live_ckpt_fn(global_pg, dest_rank, send=True)
 
     def receive_live_ckpt(self, global_pg: dist.ProcessGroup, src_rank: int):
-        def recv_ckpt():
+        self._live_ckpt_fn(global_pg, src_rank, send=False)
+
+    def _live_ckpt_fn(self, global_pg: dist.ProcessGroup, rank: int, send: bool):
+        def send_or_recv():
             time_start = time.perf_counter()
-            self._logger.info(f"Starting live ckpt thread from rank {src_rank}")
+
+            comm_fn = global_pg.send if send else global_pg.recv
+            send_or_recv = "send to" if send else "recv from"
+
+            self._logger.info(f"Starting live ckpt thread {send_or_recv}  {rank}")
+
             for param in self.diloco_offloaded_param_list:
-                global_pg.recv([param.data], src_rank, 0).wait()
+                comm_fn([param.data], rank, 0).wait()
 
             self._logger.debug(
                 "Post sync param list cpu: %s", get_list_param_signature(self.diloco_offloaded_param_list)
             )
 
             self._logger.info(
-                f"Finished live ckpt thread from rank {src_rank} in {time.perf_counter() - time_start} seconds"
+                f"Finished live ckpt thread {send_or_recv} {rank} in {time.perf_counter() - time_start} seconds"
             )
 
-        thread = threading.Thread(target=recv_ckpt)
+        thread = threading.Thread(target=send_or_recv)
         self.threads_async_live_reco.append(thread)
         thread.start()
 

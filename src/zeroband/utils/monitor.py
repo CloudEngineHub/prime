@@ -38,6 +38,12 @@ class HttpMonitor:
         self.node_ip_address = None
         self.node_ip_address_fetch_status = None
 
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
+    def __del__(self):
+        self.loop.close()
+
     def _remove_duplicates(self):
         seen = set()
         unique_logs = []
@@ -64,10 +70,7 @@ class HttpMonitor:
 
     def _handle_send_batch(self, flush: bool = False):
         if len(self.data) >= self.log_flush_interval or flush:
-            import asyncio
-
-            # do this in a separate thread to not affect training loop
-            asyncio.create_task(self._send_batch())
+            self.loop.run_until_complete(self._send_batch())
 
     async def _set_node_ip_address(self):
         if self.node_ip_address is None and self.node_ip_address_fetch_status != "failed":
@@ -110,8 +113,12 @@ class HttpMonitor:
         self.data = self.data[self.log_flush_interval :]
         return True
 
-    def _finish(self):
+    async def _finish(self):
         import requests
+
+        # Send any remaining logs
+        while self.data:
+            await self._send_batch()
 
         headers = {"Content-Type": "application/json"}
         api = f"{self.base_url}/metrics/{self.run_id}/finish"
@@ -126,8 +133,4 @@ class HttpMonitor:
     def finish(self):
         self.set_stage("finishing")
 
-        # Send any remaining logs
-        while self.data:
-            self._send_batch()
-
-        self._finish()
+        self.loop.run_until_complete(self._finish())

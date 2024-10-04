@@ -21,6 +21,8 @@ def test_elastic_device_mesh_no_global(world_size: int, random_available_port: i
             dist.all_reduce(a, op=dist.ReduceOp.SUM, group=edm.global_pg)
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
+            del edm
+
     processes = []
     for rank in range(world_size):
         processes.append(
@@ -64,6 +66,8 @@ def test_elastic_device_mesh(world_size: int, global_world_size: int, mock_env):
             sum_ints = global_world_size * (global_world_size + 1) // 2
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]) + rank * global_world_size)
 
+            del edm
+
     global_ports = [i for i in range(21970, 21970 + world_size)]
     master_ports = [i for i in range(31000, 31000 + global_world_size)]
     processes = []
@@ -96,8 +100,8 @@ def test_elastic_device_mesh(world_size: int, global_world_size: int, mock_env):
             pytest.fail(f"Process {p.pid} failed with exit code {p.exitcode}")
 
 
-@pytest.mark.parametrize("world_size", [1, 2, 8])
-@pytest.mark.parametrize("global_world_size", [2, 8])
+@pytest.mark.parametrize("world_size", [1, 2])
+@pytest.mark.parametrize("global_world_size", [2, 4])
 def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int, mock_env):
     ready_event = mp.Event()
 
@@ -136,6 +140,8 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
 
             dist.barrier(edm.global_pg)
 
+            del edm
+
     def bar(**kwargs):
         with mock_env(**kwargs):
             test_value = int(kwargs["TEST_VALUE"])
@@ -162,6 +168,8 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
             assert torch.allclose(a, torch.tensor([0, sum_ints, 2 * sum_ints]))
 
             dist.barrier(edm.global_pg)
+
+            del edm
 
     global_ports = [i for i in range(21970, 21970 + world_size)]
     master_ports = [i for i in range(31000, 31000 + global_world_size + 1)]

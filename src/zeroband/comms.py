@@ -273,6 +273,11 @@ class ElasticDeviceMesh:
 
     def maybe_reinit_global_pg(self):
         """Reinitialize the global_pg if there are joiners or dead nodes."""
+
+        if self.world_info.global_world_size == 1:
+            # no op if we only have one node
+            return
+
         time_start = time.perf_counter()
         self._logger.debug("Resolving world")
 
@@ -321,6 +326,7 @@ class ElasticDeviceMesh:
         self.global_pg = dist.ProcessGroupGloo(
             prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
         )
+        self._logger.info("Reinitialized global_pg in %s seconds", time.perf_counter() - time_start)
 
         if self._global_leader:
             self._clear_joiners()
@@ -333,6 +339,13 @@ class ElasticDeviceMesh:
         dist.barrier(self.global_pg)
 
         self.live_recovery.init_background_loop()
+        self._logger.debug("Reinitialized global_pg in %s seconds", time.perf_counter() - time_start)
+
+    def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:
+        """Get the global process group. If maybe_reinit is True, reinitialize the global process group if needed."""
+        if maybe_reinit:
+            self.maybe_reinit_global_pg()
+        return self.global_pg
 
 
 class LiveRecoveryModel(BaseModel):
@@ -362,7 +375,7 @@ class LiveRecoveryStore:
         try:
             return LiveRecoveryModel.model_validate_json(data)
         except ValidationError as e:
-            self._logger.debug(f"Catching validation error {e} while getting live recovery data")
+            self._logger.debug(f"Catching validation error {e} while getting live recovery data {data}")
             if fail_on_error:
                 raise e
             return None
@@ -417,7 +430,6 @@ class LiveRecovery:
             else:
                 # only the rank + 1 send the live ckpt, this is to avoid deadlock
                 # todo: could be more optimized in term of bandwidth if we send to the closest rank
-
                 if data.dest_rank == self.world_info.global_rank + 1:
                     data.src_rank = self.world_info.global_rank
                     self.live_ckpt_store.set(self._live_recovery_key, data)

@@ -2,6 +2,7 @@ import time
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
+from zeroband.comms import ElasticDeviceMesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from torch.distributed.fsdp import ShardingStrategy
@@ -44,11 +45,11 @@ class Diloco:
         config: DilocoConfig,
         model: nn.Module,
         fsdp_sharding_strategy: ShardingStrategy,
-        global_pg: dist.ProcessGroup,
+        elastic_device_mesh: ElasticDeviceMesh,
     ):
         self.config = config
         self.fsdp_sharding_strategy = fsdp_sharding_strategy
-        self.global_pg = global_pg
+        self.elastic_device_mesh = elastic_device_mesh
 
         self._logger = get_logger()
         self.world_info = get_world_info()
@@ -70,14 +71,15 @@ class Diloco:
         Sync the pseudo gradient from the local process group to the global process group
         """
         self._logger.debug("sync pseudo gradient")
+        global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
             param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
             # gloo does not support AVG
-            param_offloaded.grad = param_offloaded.grad / self.global_pg.size()
-            dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=self.global_pg)
+            param_offloaded.grad = param_offloaded.grad / global_pg.size()
+            dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
             # todo async here
 
     def sync_inner_model(self, model: nn.Module):

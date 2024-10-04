@@ -27,8 +27,11 @@ from zeroband.utils import (
     get_optimizer_signature,
 )
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
-from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
+from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
+from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
+from zeroband.utils.monitor import HttpMonitor
+from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
@@ -86,12 +89,19 @@ class CkptConfig(BaseConfig):
         return self
 
 
+class MonitorConfig(BaseConfig):
+    log_flush_interval: int = 10
+    base_url: str | None = None
+    auth_token: str | None = None
+
+
 class Config(BaseConfig):
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "10B", "13B", "26B", "70B"] = "150M"
     type_model: Literal["llama2", "llama3"] = "llama3"
 
     project: str = "zeroband"
+    run_id: str | None = None
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
 
     # sub config
@@ -99,6 +109,7 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
+    monitor: MonitorConfig | None = None
 
     ckpt: CkptConfig = CkptConfig()
 
@@ -265,7 +276,7 @@ def train(config: Config):
         training_progress.outer_step += 1
 
     if world_info.rank == 0:
-        logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
+        logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
         metric_logger = logger_cls(
             project=config.project,
             config={"config": config.model_dump(), "world_info": world_info.json()},
@@ -276,6 +287,10 @@ def train(config: Config):
         gpu_mem_monitor = GPUMemoryMonitor()
     if config.train.memory_profiler is not None:
         memory_profiler = MemoryProfiler(config.train.memory_profiler.freq, config.train.memory_profiler.snapshot_dir)
+
+        if config.monitor is not None:
+            monitor = HttpMonitor(config=config.model_dump(), resume=False)
+            monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -295,7 +310,10 @@ def train(config: Config):
         # at the beginning of the inner steps we allow joiner to arrive.
         # We maybe reinit before the all reduce but only to allow leaving, not to join anymore
 
-        for _inner_step in range(num_inner_steps):
+        if world_info.rank == 0 and config.monitor is not None:
+            monitor.set_stage("inner_loop")
+
+        for inner_step in range(num_inner_steps):
             loss_batch = 0
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -349,6 +367,7 @@ def train(config: Config):
                 "inner_lr": inner_lr,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": training_progress.total_tokens,
+                "time": time.time(),
             }
             if config.train.memory_monitor:
                 peak_gpu_stats = gpu_mem_monitor.get_peak_stats()
@@ -371,6 +390,8 @@ def train(config: Config):
 
             if world_info.rank == 0:
                 metric_logger.log(metrics)
+                if config.monitor is not None:
+                    monitor.log(metrics)
 
             logger.info(log)
 
@@ -380,6 +401,9 @@ def train(config: Config):
         if config.diloco is not None:
             if config.train.log_model_hash:
                 logger.debug("Pre diloco model: %s", get_module_signature(model))
+
+            if world_info.rank == 0 and config.monitor is not None:
+                monitor.set_stage("outer_loop")
 
             diloco.step(model)
 
@@ -424,6 +448,8 @@ def train(config: Config):
 
     if world_info.rank == 0:
         metric_logger.finish()
+        if config.monitor is not None:
+            monitor.finish()
 
     ckpt_manager.wait_async_save_process()
 

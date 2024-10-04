@@ -128,10 +128,12 @@ def ring_allreduce(
     # TODO: Maybe have an option to all gather in lower precision
 
     if quantization_func is not None:
+        recv_buffer = [torch.empty_like(chunks[0], dtype=torch.uint8) for _ in range(BUFFER_COUNT)]
+        send_buffer = [None for _ in range(BUFFER_COUNT)]
+        send_lookup_buffer = [None for _ in range(BUFFER_COUNT)]
+        recv_lookup_buffer = [torch.empty(256, dtype=chunks[0].dtype) for _ in range(BUFFER_COUNT)]
         send_lookup_work = [None for _ in range(BUFFER_COUNT)]
         recv_lookup_work = [None for _ in range(BUFFER_COUNT)]
-    recv_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
-    send_buffer = [torch.empty_like(chunks[0], dtype=transfer_dtype) for _ in range(BUFFER_COUNT)]
     send_work = [None] * BUFFER_COUNT
     recv_work = [None] * BUFFER_COUNT
     for step in range(1, world_size * BUFFER_COUNT + 1):
@@ -140,11 +142,30 @@ def ring_allreduce(
         if send_work[step % BUFFER_COUNT] is not None:
             send_work[step % BUFFER_COUNT].wait()
             recv_work[step % BUFFER_COUNT].wait()
-            chunks[send_chunk].copy_(recv_buffer[step % BUFFER_COUNT])
+            if quantization_func is not None:
+                send_lookup_work[step % BUFFER_COUNT].wait()
+                recv_lookup_work[step % BUFFER_COUNT].wait()
+                chunks[send_chunk].copy_(
+                    recv_lookup_buffer[step % BUFFER_COUNT][recv_buffer[step % BUFFER_COUNT].long()]
+                )
+            else:
+                chunks[send_chunk].copy_(recv_buffer[step % BUFFER_COUNT])
 
         if step <= (world_size - 1) * BUFFER_COUNT:
             # Send and receive
-            send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
+            if quantization_func is not None:
+                send_buffer[step % BUFFER_COUNT], send_lookup_buffer[step % BUFFER_COUNT] = quantization_func(
+                    chunks[send_chunk]
+                )
+                send_lookup_work[step % BUFFER_COUNT] = dist.isend(
+                    send_lookup_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step + 1000
+                )
+                recv_lookup_work[step % BUFFER_COUNT] = dist.irecv(
+                    recv_lookup_buffer[step % BUFFER_COUNT], src=recv_rank, group=group, tag=step + 1000
+                )
+            else:
+                send_buffer[step % BUFFER_COUNT].copy_(chunks[send_chunk])
+
             send_work[step % BUFFER_COUNT] = dist.isend(
                 send_buffer[step % BUFFER_COUNT], dst=send_rank, group=group, tag=step
             )

@@ -242,7 +242,7 @@ def train(config: Config):
                     callback=elastic_device_mesh.live_recovery.live_ckpt_done_callback(),
                 )
 
-            if training_progress.outer_step > 1:
+            if training_progress.outer_step > 2:
                 time.sleep(2)
 
             for grad_acc_step in range(gradient_accumulation_steps):

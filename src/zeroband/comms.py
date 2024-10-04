@@ -411,6 +411,7 @@ class LiveRecovery:
     def _live_recovery_loop(self, stop_event: mp.Event, dest_rank: mp.Value) -> None:
         while not stop_event.is_set():
             data = self.live_ckpt_store.get(self._live_recovery_key)
+            # self._logger.debug(f"data: {data}")
             if data is None:
                 continue
             else:
@@ -465,7 +466,7 @@ class LiveRecovery:
 
         while time.perf_counter() - time_start < TCPSTORE_TIMEOUT.total_seconds():
             value = self.live_ckpt_store.get("need_live_recovery").decode("utf-8")
-
+            # self._logger.debug(f"value: {value}")
             if value != str(self.world_info.global_rank):
                 data = self.live_ckpt_store.get(self._live_recovery_key)
 

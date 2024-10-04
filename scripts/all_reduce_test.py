@@ -13,6 +13,7 @@ from enum import Enum
 class TorchDtype(str, Enum):
     FLOAT32 = "float32"
     FLOAT16 = "float16"
+    BFLOAT16 = "bfloat16"
     UINT8 = "uint8"
 
 
@@ -20,6 +21,7 @@ TORCH_DTYPE_MAP = {
     None: None,
     TorchDtype.FLOAT32: torch.float32,
     TorchDtype.FLOAT16: torch.float16,
+    TorchDtype.BFLOAT16: torch.bfloat16,
     TorchDtype.UINT8: torch.uint8,
 }
 

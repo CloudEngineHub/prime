@@ -5,7 +5,7 @@ from zeroband.compression import average_buckets as average_buckets_old
 
 from zeroband.C.compression import average_buckets, uniform_8bit_quantize, quantize_per_tensor_uint8
 
-N = 1000_000_000
+N = 100_000_000
 TIME_COUNT = 1
 
 

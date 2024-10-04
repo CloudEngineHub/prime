@@ -270,6 +270,11 @@ class ElasticDeviceMesh:
 
     def maybe_reinit_global_pg(self):
         """Reinitialize the global_pg if there are joiners or dead nodes."""
+
+        if self.world_info.global_world_size == 1:
+            # no op if we only have one node
+            return
+
         time_start = time.perf_counter()
         self._logger.debug("Resolving world")
         if self._global_leader:
@@ -325,3 +330,9 @@ class ElasticDeviceMesh:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         # Without this barrier, a node might queue leave before the leaving queue is cleared
         dist.barrier(self.global_pg)
+
+    def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:
+        """Get the global process group. If maybe_reinit is True, reinitialize the global process group if needed."""
+        if maybe_reinit:
+            self.maybe_reinit_global_pg()
+        return self.global_pg

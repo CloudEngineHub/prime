@@ -170,7 +170,7 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh.global_pg)
+        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,
@@ -339,6 +339,9 @@ def train(config: Config):
         metric_logger.finish()
 
     ckpt_manager.wait_async_save_process()
+
+    del elastic_device_mesh  # allow to clean up for smoother tests transition
+
     logger.info("Training finished, exiting ...")
 
 

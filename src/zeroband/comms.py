@@ -1,12 +1,13 @@
 import sys
 import os
 import time
+from pydantic import BaseModel, ValidationError
 from torch.distributed.device_mesh import init_device_mesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
 from datetime import timedelta
-from typing import List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional
 from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 import multiprocessing as mp
 
@@ -174,6 +175,7 @@ class ElasticDeviceMesh:
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
 
+        self.live_recovery = LiveRecovery(self.global_store)
         # Setting instance variables
         self.leaving = False  # TODO: do we need this?
         # This is to match the barrier in maybe_reinit_global_pg.
@@ -184,8 +186,6 @@ class ElasticDeviceMesh:
         self._logger.info(
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )
-
-        self._counter = 0
 
     def _start_heartbeat(self):
         """Start sending heartbeats to the global store in a separate process."""
@@ -200,7 +200,7 @@ class ElasticDeviceMesh:
             self._heartbeat_stop_event.set()
             self._heartbeat_process.join()
 
-    def _heartbeat_loop(self, stop_event):
+    def _heartbeat_loop(self, stop_event: mp.Event):
         """Continuously send heartbeats until stopped."""
         try:
             while not stop_event.is_set():
@@ -328,13 +328,140 @@ class ElasticDeviceMesh:
         # Without this barrier, a node might queue leave before the leaving queue is cleared
         dist.barrier(self.global_pg)
 
+
+class LiveRecoveryModel(BaseModel):
+    dest_rank: int
+    src_rank: int | None = None
+
+
+class LiveRecoveryStore:
+    """
+    Wrapping a Store to get and set a Pydantic Base Model
+    """
+
+    def __init__(self, store: dist.Store):
+        self.store = store
+        self._logger = get_logger()
+
+    def set(self, key: str, data: LiveRecoveryModel | None) -> None:
+        if data is None:
+            self.store.set(key, "null")
+        else:
+            self.store.set(key, data.model_dump_json())
+
+    def get(self, key: str, fail_on_error: bool = False) -> LiveRecoveryModel | None:
+        data = self.store.get(key).decode("utf-8")
+        if data == "null":
+            return None
+        try:
+            return LiveRecoveryModel.model_validate_json(data)
+        except ValidationError as e:
+            self._logger.debug(f"Catching validation error {e} while getting live recovery data")
+            if fail_on_error:
+                raise e
+            return None
+
+
+class LiveRecovery:
+    """Handle the live recovery:
+
+    under the hood:
+
+    Each node check indefinitly the "live_recovery" key in the store.
+    If the key is set by a node, it means that the node + 1 need a live recovery.
+    The node + 1 set the key with its rank and start sending the ckpt to the node.
+    The node + 1 wait for the ckpt to be ack by the node and then remove the key from the store.
+    """
+
+    _live_recovery_key: str = "live_recovery"
+
+    def __init__(self, global_store: dist.Store):
+        self.global_store = global_store
+
+        self._logger = get_logger()
+        self.world_info = get_world_info()
+
+        self.live_ckpt_store = LiveRecoveryStore(dist.PrefixStore("live_ckpt", self.global_store))
+        self.live_ckpt_store.set(self._live_recovery_key, None)
+
+        self._stop_event = mp.Event()
+        self._dest_rank = mp.Value("i", -1)
+
+        self._live_recovery_process = mp.Process(
+            target=self._live_recovery_loop, args=(self._stop_event, self._dest_rank)
+        )
+        self._live_recovery_process.start()
+
+    def __del__(self):
+        self._stop_event.set()
+        self._live_recovery_process.join()
+
+    def _live_recovery_loop(self, stop_event: mp.Event, dest_rank: mp.Value) -> None:
+        while not stop_event.is_set():
+            data = self.live_ckpt_store.get(self._live_recovery_key)
+            if data is None:
+                continue
+            else:
+                # only the rank + 1 send the live ckpt, this is to avoid deadlock
+                # todo: could be more optimized in term of bandwidth if we send to the closest rank
+
+                if data.dest_rank == self.world_info.global_rank + 1:
+                    data.src_rank = self.world_info.global_rank
+                    self.live_ckpt_store.set(self._live_recovery_key, data)
+                    dest_rank.value = data.src_rank
+
+            time.sleep(HEARTBEAT_INTERVAL)
+
     def should_send_live_ckpt(self) -> int | None:
         """Return the rank to send the live ckpt to and None if not needed to send.
         Will return None most of the time
         """
 
-        self._counter += 1
-        if self._counter == 5:
-            self._logger.debug("should send live ckpt")
-            return 1
+        if self._dest_rank.value != -1:
+            dest_rank = self._dest_rank.value
+            self._dest_rank.value = -1
+            return dest_rank
         return None
+
+    def live_ckpt_done_callback(self) -> Callable:
+        def callback():
+            self.live_ckpt_store.set(self._live_recovery_key, None)
+            self._dest_rank.value = -1
+
+        return callback
+
+    def get_src(self) -> int:
+        """
+        Send a signal to all other node that this node need a live recovery. Await for a response from all other nodes
+        and return a src rank from which to pool which should have start sending the live ckpt.
+
+        This function can take up to TCPSTORE_TIMEOUT seconds to complete.
+        """
+        # todo make this live reco in parralel
+
+        time_start = time.perf_counter()
+        self._logger.info("Waiting for live recovery source")
+
+        data = self.live_ckpt_store.get(self._live_recovery_key)
+
+        if data is not None:
+            raise RuntimeError(
+                "Live recovery already in progress, cannot handle multiple live recovery at the same time for now"
+            )
+
+        self.live_ckpt_store.set(self._live_recovery_key, LiveRecoveryModel(dest_rank=self.world_info.global_rank))
+
+        while time.perf_counter() - time_start < TCPSTORE_TIMEOUT.total_seconds():
+            value = self.live_ckpt_store.get("need_live_recovery").decode("utf-8")
+
+            if value != str(self.world_info.global_rank):
+                data = self.live_ckpt_store.get(self._live_recovery_key)
+
+                if data.dest_rank == self.world_info.global_rank:
+                    if data.src_rank is not None:
+                        self.live_ckpt_store.set(self._live_recovery_key, None)
+                        return data.src_rank
+
+            time.sleep(TCPSTORE_POLLING_INTERVAL)
+
+        raise RuntimeError("Timed out waiting for live recovery")

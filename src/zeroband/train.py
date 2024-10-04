@@ -205,8 +205,8 @@ def train(config: Config):
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
     if world_info.global_rank == 1:
-        time.sleep(10)  # Faking the "it joins the training later behavior"
-        ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, 0)
+        live_recovery_src = elastic_device_mesh.live_recovery.get_src()
+        ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, live_recovery_src)
         ckpt_manager.maybe_wait_for_live_ckpt()
 
     model.train()
@@ -235,10 +235,14 @@ def train(config: Config):
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
-            if dest_rank := elastic_device_mesh.should_send_live_ckpt() is not None:
-                # todo this whole checking process could be async
-                if world_info.global_rank == 0:
-                    ckpt_manager.send_live_ckpt(elastic_device_mesh.global_pg, dest_rank)
+            if dest_rank := elastic_device_mesh.live_recovery.should_send_live_ckpt() is not None:
+                ckpt_manager.send_live_ckpt(
+                    global_pg=elastic_device_mesh.global_pg,
+                    dest_rank=dest_rank,
+                    callback=elastic_device_mesh.live_recovery.live_ckpt_done_callback(),
+                )
+
+            time.sleep(2)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1

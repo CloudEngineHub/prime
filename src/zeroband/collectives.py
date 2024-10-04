@@ -124,8 +124,10 @@ def ring_allreduce(
     if op == dist.ReduceOp.AVG:
         for i in range(BUFFER_COUNT):
             chunks[i + rank * BUFFER_COUNT].divide_(world_size)
-
-    # TODO: Maybe have an option to all gather in lower precision
+    if quantization_func is not None:
+        for i in range(BUFFER_COUNT):
+            quant_weight, lookup = quantization_func(chunks[i + rank * BUFFER_COUNT])
+            chunks[i + rank * BUFFER_COUNT].copy_(lookup[quant_weight.long()])
 
     if quantization_func is not None:
         recv_buffer = [torch.empty_like(chunks[0], dtype=torch.uint8) for _ in range(BUFFER_COUNT)]
@@ -136,6 +138,7 @@ def ring_allreduce(
         recv_lookup_work = [None for _ in range(BUFFER_COUNT)]
     send_work = [None] * BUFFER_COUNT
     recv_work = [None] * BUFFER_COUNT
+
     for step in range(1, world_size * BUFFER_COUNT + 1):
         send_chunk = (rank * BUFFER_COUNT + BUFFER_COUNT - step) % num_buffers
 

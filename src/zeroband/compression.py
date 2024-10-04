@@ -11,6 +11,7 @@ import os
 
 RANGE_IN_SIGMAS: int = 6
 EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("QUANTIZATION_THREADS", 128)))
+n_bins = 2**8
 
 
 def average_buckets(tensor: torch.Tensor, quant_weight: torch.Tensor, n_bins: int) -> torch.Tensor:
@@ -48,9 +49,6 @@ def quantile_qq_approximation(array: np.ndarray, n_quantiles: int, min_chunk_siz
     for job in jobs:
         job.result()
     return np.quantile(partition_quantiles, quantiles)
-
-
-n_bins = 2**8
 
 
 def uniform_8bit_quantize(tensor: torch.Tensor, inplace: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:

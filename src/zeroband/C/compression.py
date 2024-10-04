@@ -3,9 +3,9 @@ import torch
 from torch.utils.cpp_extension import load
 from pathlib import Path
 
-COMPRESS_CSRC_PATH = Path(__file__).parent.parent / "csrc" / "compress.cpp"
+COMPRESS_CSRC_PATH = Path(__file__).parent / "csrc" / "compress.cpp"
 
-compress_ops = load(name="compress", sources=["src/zeroband/csrc/compress.cpp"], extra_cflags=["-O3"], verbose=False)
+compress_ops = load(name="compress", sources=[COMPRESS_CSRC_PATH], extra_cflags=["-O3"], verbose=False)
 
 
 def uniform_8bit_quantize(tensor: torch.Tensor, inplace: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:

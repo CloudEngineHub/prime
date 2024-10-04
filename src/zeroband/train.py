@@ -204,8 +204,11 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
-    if world_info.global_rank == 2:
-        live_recovery_src = elastic_device_mesh.live_recovery.get_src()
+    if elastic_device_mesh.live_recovery.need_live_ckpt():
+        logger.debug("need live ckpt will do fake step")
+        # diloco.fake_step(model=model)
+
+        live_recovery_src = elastic_device_mesh.live_recovery.get_live_ckpt_src()
         ckpt_manager.receive_live_ckpt(elastic_device_mesh.global_pg, live_recovery_src)
         ckpt_manager.maybe_wait_for_live_ckpt()
 
@@ -235,15 +238,15 @@ def train(config: Config):
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 
-            if dest_rank := elastic_device_mesh.live_recovery.should_send_live_ckpt() is not None:
+            potential_dest_rank = elastic_device_mesh.live_recovery.start_live_ckpt()
+            if potential_dest_rank is not None:
+                dest_rank = potential_dest_rank
                 ckpt_manager.send_live_ckpt(
                     global_pg=elastic_device_mesh.global_pg,
                     dest_rank=dest_rank,
-                    callback=elastic_device_mesh.live_recovery.live_ckpt_done_callback(),
                 )
 
-            if training_progress.outer_step > 2:
-                time.sleep(2)
+            time.sleep(0.5)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1

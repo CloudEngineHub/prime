@@ -4,7 +4,7 @@ import multiprocessing
 import os
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 from fsspec.generic import rsync as rsync_fsspec
 import torch
 from torch import nn
@@ -240,7 +240,7 @@ class CkptManager:
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def send_live_ckpt(self, global_pg: dist.ProcessGroup, dest_rank: int, callback: Callable | None = None):
+    def send_live_ckpt(self, global_pg: dist.ProcessGroup, dest_rank: int):
         def send_ckpt():
             time_start = time.perf_counter()
             self._logger.info(f"Starting live ckpt thread for rank {dest_rank}")
@@ -254,9 +254,6 @@ class CkptManager:
             self._logger.info(
                 f"Finished live ckpt thread for rank {dest_rank} in {time.perf_counter() - time_start} seconds"
             )
-
-            if callback is not None:
-                callback()
 
         thread = threading.Thread(target=send_ckpt)
         self.threads_async_live_reco.append(thread)

@@ -66,19 +66,23 @@ class Diloco:
         )
         self._logger.debug("offload model to cpu")
 
-    def sync_pseudo_gradient(self, model: nn.Module):
+    def sync_pseudo_gradient(self, model: nn.Module, fake: bool = False):
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
-        self._logger.debug("sync pseudo gradient")
         global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+        self._logger.debug(f"Start all reduce pseudo gradient with {global_pg.size()} peers")
+        dist.barrier(group=global_pg)
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
-            param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+            if fake:
+                param_offloaded.grad = torch.zeros_like(param_offloaded.grad)
+            else:
+                param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+                # gloo does not support AVG
+                param_offloaded.grad = param_offloaded.grad / global_pg.size()
 
-            # gloo does not support AVG
-            param_offloaded.grad = param_offloaded.grad / global_pg.size()
             dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
             # todo async here
 
@@ -118,3 +122,11 @@ class Diloco:
             self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
         self.sync_inner_model(model)
+
+    def fake_step(self, model: nn.Module):
+        """
+        Fake step the optimizer. This contribute zero to the all reduce.
+
+        note: the all reduce is till done
+        """
+        self.sync_pseudo_gradient(model, fake=True)

@@ -126,7 +126,7 @@ std::tuple<torch::Tensor, torch::Tensor> uniform_8bit_quantize(torch::Tensor ten
 
 
 // PyBind11 module
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+PYBIND11_MODULE(compression, m) {
     m.def(
         "average_buckets",
         &average_buckets_multithread,

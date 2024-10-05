@@ -78,7 +78,9 @@ class Diloco:
         Sync the pseudo gradient from the local process group to the global process group
         """
         self._logger.debug("sync pseudo gradient")
-        global_pg = self.elastic_device_mesh.get_global_pg(admit_joiners=False)
+        
+        self.elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=False)
+        global_pg = self.elastic_device_mesh.global_pg
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue

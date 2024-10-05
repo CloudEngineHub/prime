@@ -246,7 +246,9 @@ def train(config: Config):
 
         time_start_outer = time.perf_counter()
 
-        elastic_device_mesh.maybe_reinit_global_pg()  # we call meybe reinit at the begining of each outer step
+        elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+        # at the beginning of the outer steps we allow joiner to arrive.
+        # We maybe reinit before the all reduce but only node to leave not to join anymore
 
         for _inner_step in range(num_inner_steps):
             loss_batch = 0

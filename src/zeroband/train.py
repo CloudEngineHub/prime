@@ -1,6 +1,6 @@
 import os
 from contextlib import nullcontext
-from typing import Literal, Self
+from typing import Literal
 import time
 from pydantic import model_validator
 
@@ -61,10 +61,23 @@ class TrainConfig(BaseConfig):
 
 
 class CkptConfig(BaseConfig):
-    path: str
-    interval: int
+    path: str | None = None
+    interval: int | None = None
 
     remote_path: str | None = None  # could be a s3 path
+
+    live_recovery: bool = False
+
+    resume: str | None = None
+
+    @model_validator(mode="after")
+    def validate_path_and_interval(self):
+        if (self.path is None) != (self.interval is None):
+            raise ValueError("path and interval must be bpth set or both None")
+        if self.path is None and self.remote_path is not None:
+            raise ValueError("remote_path is set but path is not set")
+
+        return self
 
 
 class Config(BaseConfig):
@@ -81,16 +94,20 @@ class Config(BaseConfig):
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
 
-    ckpt: CkptConfig | None = None
-    resume: str | None = None
-
-    live_recovery_server: bool = False
+    ckpt: CkptConfig = CkptConfig()
 
     @model_validator(mode="after")
-    def live_reco_very_check(self) -> Self:
-        if self.live_recovery_server and self.diloco is None:
+    def live_reco_very_check(self):
+        if self.ckpt.live_recovery and self.diloco is None:
             raise ValueError("Diloco must be set to use live recovery")
         return self
+
+    @model_validator(mode="after")
+    def ckpt_diloco_step(self):
+        if self.ckpt is not None and self.ckpt.interval is not None and self.diloco is not None:
+            assert (
+                self.ckpt.interval % self.diloco.inner_steps == 0
+            ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
 
 
 def train(config: Config):
@@ -102,11 +119,6 @@ def train(config: Config):
 
     assert batch_size % config.train.micro_bs == 0
     gradient_accumulation_steps = batch_size // config.train.micro_bs
-
-    if config.ckpt is not None and config.ckpt.interval is not None and config.diloco is not None:
-        assert (
-            config.ckpt.interval % config.diloco.inner_steps == 0
-        ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
 
     tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
@@ -183,7 +195,7 @@ def train(config: Config):
     training_progress = TrainingProgress(total_tokens=0, outer_step=0, step=0)
 
     ckpt_manager = CkptManager(
-        ckpt_path=config.ckpt.path if config.ckpt is not None else None,
+        ckpt_path=config.ckpt.path,
         model=model,
         optimizer=inner_optimizer,
         scheduler=scheduler,
@@ -191,7 +203,7 @@ def train(config: Config):
         training_progress=training_progress,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
-        live_ckpt_server=config.live_recovery_server,
+        live_ckpt_server=config.ckpt.live_recovery,
     )
 
     if config.train.torch_compile:
@@ -199,9 +211,9 @@ def train(config: Config):
         model = torch.compile(model)
         logger.debug("model compiled")
 
-    if config.resume is not None:
+    if config.ckpt.resume is not None:
         # all is inplace
-        ckpt_manager.load(resume_ckpt_path=config.resume)
+        ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
         # time.sleep(4)
@@ -321,8 +333,12 @@ def train(config: Config):
 
         training_progress.outer_step += 1
 
+        if config.ckpt.live_recovery:
+            # we save after each outer step sync when using shm save. Used usually for live recovery
+            ckpt_manager.save_shm()
+
         if (
-            config.ckpt is not None
+            config.ckpt.interval is not None
             and training_progress.step > 0
             and training_progress.step % config.ckpt.interval == 0
         ):

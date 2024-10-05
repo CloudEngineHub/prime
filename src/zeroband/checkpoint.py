@@ -31,6 +31,8 @@ from zeroband.utils.world_info import get_world_info
 
 ## code inspired by torchtitan https://github.com/pytorch/torchtitan/blob/main/torchtitan/checkpoint.py
 
+SHM_PATH = "/dev/shm/zeroband"
+
 
 @dataclass
 class TrainingProgress(Stateful):
@@ -109,8 +111,6 @@ class CkptManager:
         live_ckpt_server: bool = False,
     ):
         self.ckpt_path = ckpt_path
-        if ckpt_path is None and live_ckpt_server:
-            raise ValueError("ckpt_path must be provided if live_ckpt_server is True")
 
         self.model = model
         self.optimizer = optimizer
@@ -134,7 +134,7 @@ class CkptManager:
         self.async_save_process: list[multiprocessing.Process] = []
 
         if live_ckpt_server:
-            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank, ckpt_path=self.ckpt_path)
+            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank, ckpt_path=SHM_PATH)
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -151,7 +151,13 @@ class CkptManager:
             # main reason is that we actually don't a cpu model but just a list of cpu parameters.
             self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
-    def save(self, remote_ckpt_path: str | None) -> None:
+    def save_shm(self) -> None:
+        """
+        Save the latest checkpoint in shared memory.
+        """
+        self.save(overide_ckpt_path=SHM_PATH, remote_ckpt_path=None)
+
+    def save(self, remote_ckpt_path: str | None, overide_ckpt_path: str | None = None) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -163,8 +169,13 @@ class CkptManager:
         time_start = time.perf_counter()
         world_info = get_world_info()
 
-        og_ckpt_path = self.ckpt_path
-        ckpt_path = os.path.join(self.ckpt_path, f"step_{self.training_progress.step}")
+        if not overide_ckpt_path:
+            og_ckpt_path = self.ckpt_path
+            ckpt_path = os.path.join(og_ckpt_path, f"step_{self.training_progress.step}")
+        else:
+            og_ckpt_path = overide_ckpt_path
+            ckpt_path = os.path.join(overide_ckpt_path, "latest")
+
         if self.diloco_offloaded_optimizer:
             # here we save model and offloaded optimizer on each diloco rank even tho they are the same
             # this is done for two reasons:
@@ -186,11 +197,12 @@ class CkptManager:
             with open(os.path.join(ckpt_path, f"__{world_info.local_rank}_0.pt"), "wb") as f:
                 torch.save({"data_loader": self.dataloader.state_dict()}, f)
 
-            ## create a symlink from step_{now} to latest
-            latest_link = os.path.join(og_ckpt_path, "latest")
-            if os.path.islink(latest_link):
-                os.unlink(latest_link)
-            os.symlink(f"step_{self.training_progress.step}", latest_link)
+            if overide_ckpt_path is None:
+                ## create a symlink from step_{now} to latest
+                latest_link = os.path.join(og_ckpt_path, "latest")
+                if os.path.islink(latest_link):
+                    os.unlink(latest_link)
+                os.symlink(f"step_{self.training_progress.step}", latest_link)
 
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
@@ -225,6 +237,7 @@ class CkptManager:
             process.join()
 
     def _del__(self):
+        os.remove(SHM_PATH)
         self.wait_async_save_process()
         if self.live_server is not None:
             self.live_server.stop()

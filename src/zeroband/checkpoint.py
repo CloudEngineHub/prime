@@ -101,6 +101,7 @@ class CkptManager:
         training_progress: TrainingProgress,
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
+        live_ckpt_server: bool = False,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -119,8 +120,12 @@ class CkptManager:
         self._init_state()
 
         self._logger = get_logger()
+        self.world_info = get_world_info()
 
         self.async_save_process: list[multiprocessing.Process] = []
+
+        if live_ckpt_server:
+            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank)
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -203,6 +208,8 @@ class CkptManager:
 
     def _del__(self):
         self.wait_async_save_process()
+        if self.live_server is not None:
+            self.live_server.stop()
 
     def load(self, resume_ckpt_path: str) -> None:
         """
@@ -235,3 +242,26 @@ class CkptManager:
         self._init_state()
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+
+class CkptLiveServer:
+    def __init__(self, port: int):
+        self.port = port
+        self._logger = get_logger()
+
+        self._process = multiprocessing.Process(target=self._start_http_server, daemon=True)
+        self._process.start()
+
+    def _start_http_server(self):
+        import http.server
+        import socketserver
+
+        with socketserver.TCPServer(("", self.port), http.server.SimpleHTTPRequestHandler) as httpd:
+            self._logger.debug(f"Start serving live ckpt on {self.port}")
+            httpd.serve_forever()
+
+    def stop(self):
+        self._process.terminate()
+
+    def __del__(self):
+        self.stop()

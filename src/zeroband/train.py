@@ -183,6 +183,7 @@ def train(config: Config):
         training_progress=training_progress,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
+        live_ckpt_server=world_info.global_rank == 0,
     )
 
     if config.train.torch_compile:
@@ -198,7 +199,10 @@ def train(config: Config):
         tmp_folder = tempfile.TemporaryDirectory()
         with tmp_folder:
             resume_path = os.path.join(tmp_folder.name, "step_2/")
-            wget(source="http://localhost:8000/outputs/step_2/diloco_1", destination=tmp_folder.name)
+            wget(
+                source=f"http://localhost:{8000+world_info.global_rank - 1}/outputs/step_2/diloco_1",
+                destination=tmp_folder.name,
+            )
             ckpt_manager.load(resume_ckpt_path=resume_path)
 
     if world_info.rank == 0:

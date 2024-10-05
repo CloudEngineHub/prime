@@ -102,7 +102,6 @@ class CkptManager:
 
     def __init__(
         self,
-        ckpt_path: str | None,
         model: nn.Module,
         optimizer: Optimizer,
         scheduler: LambdaLR,
@@ -112,8 +111,6 @@ class CkptManager:
         diloco_offloaded_optimizer: Optimizer | None,
         live_ckpt_server: bool = False,
     ):
-        self.ckpt_path = ckpt_path
-
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -137,6 +134,7 @@ class CkptManager:
 
         if live_ckpt_server:
             self.live_server = CkptLiveServer(port=LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=SHM_PATH)
+            shutil.rmtree(SHM_PATH)
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -157,33 +155,45 @@ class CkptManager:
         """
         Save the latest checkpoint in shared memory.
         """
-        self.save(overide_ckpt_path=SHM_PATH, remote_ckpt_path=None)
+        time_start = time.perf_counter()
+        ckpt_path = os.path.join(SHM_PATH, "latest")
+        self._save(ckpt_path)
+        self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def save(self, remote_ckpt_path: str | None, overide_ckpt_path: str | None = None) -> None:
+    def save(self, ckpt_path: str, remote_ckpt_path: str | None, shm_save: bool = False) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
         Saving is done inplace.
 
-        Save in the subfolder `step_<step>` and create a symlink `latest`.
+        Save in the subfolder `step_<step>`.
+
+        shm_save=True mean we previsouly saved to shm so we just do a copy past to disk
         """
 
         time_start = time.perf_counter()
-        world_info = get_world_info()
 
-        if not overide_ckpt_path:
-            og_ckpt_path = self.ckpt_path
-            ckpt_path = os.path.join(og_ckpt_path, f"step_{self.training_progress.step}")
+        step_ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
+
+        if not shm_save:
+            self._save(ckpt_path)
+            if remote_ckpt_path is not None:
+                self._async_save_remote(step_ckpt_path, remote_ckpt_path)
+            self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
+
         else:
-            og_ckpt_path = overide_ckpt_path
-            ckpt_path = os.path.join(overide_ckpt_path, "latest")
+            shm_path = os.path.join(SHM_PATH, "latest")
+            self._async_save_remote(
+                shm_path, step_ckpt_path, os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
+            )
 
+    def _save(self, ckpt_path: str):
         if self.diloco_offloaded_optimizer:
             # here we save model and offloaded optimizer on each diloco rank even tho they are the same
             # this is done for two reasons:
             #   * if the nodes don't share a filesystem nor a remote path, they still save all of the data
             #   * its easier to implement and avoid race condition on the shared data.
-            ckpt_path = os.path.join(ckpt_path, f"diloco_{world_info.diloco_rank}")
+            ckpt_path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
 
         catch_warning = self._logger.getEffectiveLevel() <= logging.INFO
 
@@ -196,35 +206,29 @@ class CkptManager:
             dcp.save(self.states, checkpoint_id=ckpt_path)
 
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
-            with open(os.path.join(ckpt_path, f"__{world_info.local_rank}_0.pt"), "wb") as f:
+            with open(os.path.join(ckpt_path, f"__{self.world_info.local_rank}_0.pt"), "wb") as f:
                 torch.save({"data_loader": self.dataloader.state_dict()}, f)
-
-            if overide_ckpt_path is None:
-                ## create a symlink from step_{now} to latest
-                latest_link = os.path.join(og_ckpt_path, "latest")
-                if os.path.islink(latest_link):
-                    os.unlink(latest_link)
-                os.symlink(f"step_{self.training_progress.step}", latest_link)
-
-        self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         gc.collect()
 
-        if remote_ckpt_path is not None:
-            self._async_save_remote(ckpt_path, remote_ckpt_path)
-
-    def _async_save_remote(self, remote_ckpt_path: str):
+    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str, second_remote_path: str | None = None):
         """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
-        specific libraries (e.g. s3fs)
+        specific libraries (e.g. s3fs).
+
+        If second_remote_path is provided, it will rsync the remote_ckpt_path to the second_remote_path after the first. sync
+        Usefull for sh to disk to remote save operation.
         """
 
-        def rsync():
+        def _rsync(src_path: str, dest_path: str):
             time_start = time.perf_counter()
-            self._logger.info(f"start pushing {self.ckpt_path} to {remote_ckpt_path} asynchronously")
-            rsync_fsspec(self.ckpt_path, destination=remote_ckpt_path)
-            self._logger.info(
-                f"finish pushing {self.ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
-            )
+            self._logger.info(f"start pushing {src_path} to {dest_path} asynchronously")
+            rsync_fsspec(src_path, destination=dest_path)
+            self._logger.info(f"finish pushing {src_path} to {dest_path} in {time.perf_counter() - time_start} seconds")
+
+        def rsync():
+            _rsync(ckpt_path, remote_ckpt_path)
+            if second_remote_path:
+                _rsync(remote_ckpt_path, second_remote_path)
 
         processes = multiprocessing.Process(target=rsync, daemon=True)
         processes.start()

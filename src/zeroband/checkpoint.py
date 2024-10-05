@@ -34,6 +34,8 @@ from zeroband.utils.world_info import get_world_info
 
 SHM_PATH = "/dev/shm/zeroband"
 
+ZERO_BAND_LIVE_RECO_PORT = int(os.environ.get("ZERO_BAND_LIVE_RECO_PORT", "8000"))
+
 
 @dataclass
 class TrainingProgress(Stateful):
@@ -135,7 +137,9 @@ class CkptManager:
         self.async_save_process: list[multiprocessing.Process] = []
 
         if live_ckpt_server:
-            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank, ckpt_path=SHM_PATH)
+            self.live_server = CkptLiveServer(
+                port=ZERO_BAND_LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=SHM_PATH
+            )
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -288,11 +292,11 @@ class CkptManager:
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
             wget(
-                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}",
+                source=f"http://localhost:{ZERO_BAND_LIVE_RECO_PORT+dest_rank}/latest/diloco_{dest_rank}",
                 destination=path,
             )
             wget(
-                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}/.metadata",
+                source=f"http://localhost:{ZERO_BAND_LIVE_RECO_PORT+dest_rank}/latest/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
         dist.barrier()

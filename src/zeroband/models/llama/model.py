@@ -37,7 +37,7 @@ class ModelArgs:
     # If `True`, then each transformer block init uses its layer ID, and if
     # `False`, each uses the total number of transformer blocks
     depth_init: bool = True
-    norm_type: str = "rmsnorm"
+    norm_type: str = "fused_rmsnorm"
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:

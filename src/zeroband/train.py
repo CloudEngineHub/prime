@@ -1,7 +1,8 @@
 import os
 from contextlib import nullcontext
-from typing import Literal
+from typing import Literal, Self
 import time
+from pydantic import model_validator
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
@@ -84,6 +85,12 @@ class Config(BaseConfig):
     resume: str | None = None
 
     live_recovery_server: bool = False
+
+    @model_validator(mode="after")
+    def live_reco_very_check(self) -> Self:
+        if self.live_recovery_server and self.diloco is None:
+            raise ValueError("Diloco must be set to use live recovery")
+        return self
 
 
 def train(config: Config):

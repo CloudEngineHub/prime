@@ -216,9 +216,8 @@ def train(config: Config):
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
-        # time.sleep(4)
-        # diloco.fake_step(model)
         ckpt_manager.download_and_load_ckpt_from_peers()
+        diloco.fake_step(model)
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
@@ -245,6 +244,9 @@ def train(config: Config):
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
         time_start_outer = time.perf_counter()
+
+        elastic_device_mesh.maybe_reinit_global_pg()  # we call meybe reinit at the begining of each outer step
+
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
 

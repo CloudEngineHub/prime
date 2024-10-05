@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import gc
 import multiprocessing
 import os
+import shutil
 import time
 from typing import Any
 from fsspec.generic import rsync as rsync_fsspec
@@ -279,6 +280,8 @@ class CkptManager:
 
     def download_and_load_ckpt_from_peers(self):
         path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
+        if os.path.exists(path):
+            shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
         dest_rank = self.world_info.global_rank - 1
 

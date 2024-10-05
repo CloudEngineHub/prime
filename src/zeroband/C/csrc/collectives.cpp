@@ -152,6 +152,7 @@ void ring_allreduce(
         }
     }
 
+    // TODO: Interleave these with the previous loop?
     if (op == c10d::ReduceOp::AVG) {
         for (int i = 0; i < BUFFER_COUNT; ++i) {
             chunks[i + rank * BUFFER_COUNT].div_(world_size);
@@ -196,9 +197,7 @@ void ring_allreduce(
             recv_work[step % BUFFER_COUNT]->wait();
             send_lookup_work[step % BUFFER_COUNT]->wait();
             recv_lookup_work[step % BUFFER_COUNT]->wait();
-            //auto a = recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)});
-            //chunks[send_chunk].copy_(a);
-            //chunks[send_chunk].copy_(recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)}).to(tensor.dtype()));
+
             auto& chunk = chunks[send_chunk];
             auto& lookup = recv_lookup_buffer[step % BUFFER_COUNT];
             auto& indices = recv_buffer[step % BUFFER_COUNT];

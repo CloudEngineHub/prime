@@ -23,6 +23,7 @@ import torch.distributed as dist
 
 
 from torch.distributed.checkpoint.stateful import Stateful
+from zeroband.comms import LIVE_RECO_PORT
 from zeroband.utils.logging import get_logger
 import warnings
 import logging
@@ -33,8 +34,6 @@ from zeroband.utils.world_info import get_world_info
 ## code inspired by torchtitan https://github.com/pytorch/torchtitan/blob/main/torchtitan/checkpoint.py
 
 SHM_PATH = "/dev/shm/zeroband"
-
-ZERO_BAND_LIVE_RECO_PORT = int(os.environ.get("ZERO_BAND_LIVE_RECO_PORT", "8000"))
 
 
 @dataclass
@@ -137,9 +136,7 @@ class CkptManager:
         self.async_save_process: list[multiprocessing.Process] = []
 
         if live_ckpt_server:
-            self.live_server = CkptLiveServer(
-                port=ZERO_BAND_LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=SHM_PATH
-            )
+            self.live_server = CkptLiveServer(port=LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=SHM_PATH)
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -282,7 +279,7 @@ class CkptManager:
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def download_and_load_ckpt_from_peers(self):
+    def download_and_load_ckpt_from_peers(self, adress: str):
         path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
         if os.path.exists(path):
             shutil.rmtree(path)
@@ -292,11 +289,11 @@ class CkptManager:
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
             wget(
-                source=f"http://localhost:{ZERO_BAND_LIVE_RECO_PORT+dest_rank}/latest/diloco_{dest_rank}",
+                source=f"http://{adress}/latest/diloco_{dest_rank}",
                 destination=path,
             )
             wget(
-                source=f"http://localhost:{ZERO_BAND_LIVE_RECO_PORT+dest_rank}/latest/diloco_{dest_rank}/.metadata",
+                source=f"http://{adress}/latest/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
         dist.barrier()

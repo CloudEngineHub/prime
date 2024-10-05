@@ -20,6 +20,8 @@ HEARTBEAT_TIMEOUT = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS", "10")
 )  # Time in seconds after which a node is considered dead if no heartbeat is received
 
+LIVE_RECO_PORT = int(os.environ.get("ZERO_BAND_LIVE_RECO_PORT", "8000"))
+
 
 class ElasticDeviceMesh:
     """A class to manage the process groups for elastic training without restarts.
@@ -180,6 +182,8 @@ class ElasticDeviceMesh:
             self.global_store.set("resolved_time", str(time.time()))
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
+
+        self.live_recovery.init_live_endpoint(self.global_store)
 
         # Setting instance variables
         self.leaving = False  # TODO: do we need this?
@@ -355,3 +359,17 @@ class LiveRecovery:
     def __init__(self):
         self.world_info = get_world_info()
         self.need_live_recovery = False
+        self.store: dist.Store | None = None
+        self.world_info = get_world_info()
+
+    def init_live_endpoint(self, store: dist.Store):
+        """
+        Put its own adress to the store so that other nodes can connect to it for live recovery
+        """
+        self.store = dist.PrefixStore("live_reco_adress", store)
+        port = LIVE_RECO_PORT + self.world_info.global_rank
+        self.store.set(f"adress_{self.world_info.global_unique_id}", f"localhost:{port}")
+
+    def get_adress(self, rank: int) -> str:
+        """Get the live recovery adress for a given rank."""
+        return self.store.get(f"adress_{rank}").decode("utf-8")

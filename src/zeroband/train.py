@@ -22,7 +22,6 @@ from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
 from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
-from zeroband.utils.wget import wget
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
@@ -200,23 +199,7 @@ def train(config: Config):
     if elastic_device_mesh.live_recovery.need_live_recovery():
         # time.sleep(4)
         # diloco.fake_step(model)
-        path = f"/tmp/zeroband/node_{world_info.global_rank}"
-        os.makedirs(path, exist_ok=True)
-        dest_rank = world_info.global_rank - 1
-
-        if world_info.local_rank == 0:
-            # only local rank download the ckpt
-            wget(
-                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}",
-                destination=path,
-            )
-            wget(
-                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}/.metadata",
-                destination=path,
-            )
-        dist.barrier(elastic_device_mesh.local_pg)
-
-        ckpt_manager.load(resume_ckpt_path=path, diloco_rank=dest_rank)
+        ckpt_manager.download_and_load_ckpt_from_peers()
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

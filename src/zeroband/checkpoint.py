@@ -18,10 +18,14 @@ from torch.distributed.checkpoint.state_dict import (
     get_optimizer_state_dict,
     StateDictOptions,
 )
+import torch.distributed as dist
+
+
 from torch.distributed.checkpoint.stateful import Stateful
 from zeroband.utils.logging import get_logger
 import warnings
 import logging
+from zeroband.utils.wget import wget
 
 from zeroband.utils.world_info import get_world_info
 
@@ -259,6 +263,24 @@ class CkptManager:
         self._init_state()
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
+
+    def download_and_load_ckpt_from_peers(self):
+        path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
+        os.makedirs(path, exist_ok=True)
+        dest_rank = self.world_info.global_rank - 1
+
+        if self.world_info.local_rank == 0:
+            # only local rank download the ckpt
+            wget(
+                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}",
+                destination=path,
+            )
+            wget(
+                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}/.metadata",
+                destination=path,
+            )
+        dist.barrier()
+        self.load(resume_ckpt_path=path, diloco_rank=dest_rank)
 
 
 class CkptLiveServer:

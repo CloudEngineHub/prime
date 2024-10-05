@@ -4,6 +4,74 @@
 
 constexpr int BUFFER_COUNT = 2;
 
+template <typename T>
+void fast_index_add_omp(T* output, const T* lookup_table, const uint8_t* indices, int64_t n) {
+    #pragma omp parallel for
+    for (int64_t i = 0; i < n; ++i) {
+        output[i] += lookup_table[indices[i]];
+    }
+}
+
+template <typename T>
+void fast_index_set_omp(T* output, const T* lookup_table, const uint8_t* indices, int64_t n) {
+    #pragma omp parallel for
+    for (int64_t i = 0; i < n; ++i) {
+        output[i] = lookup_table[indices[i]];
+    }
+}
+
+inline size_t get_num_threads() {
+    return std::max(1u, std::thread::hardware_concurrency());
+}
+
+template <typename T>
+void fast_index_add_worker(T* output, const T* lookup_table, const uint8_t* indices, int64_t start, int64_t end) {
+    for (int64_t i = start; i < end; ++i) {
+        output[i] += lookup_table[indices[i]];
+    }
+}
+
+template <typename T>
+void fast_index_add(T* output, const T* lookup_table, const uint8_t* indices, int64_t n) {
+    size_t num_threads = get_num_threads();
+    std::vector<std::thread> threads;
+    int64_t chunk_size = n / num_threads;
+
+    for (size_t i = 0; i < num_threads; ++i) {
+        int64_t start = i * chunk_size;
+        int64_t end = (i == num_threads - 1) ? n : (i + 1) * chunk_size;
+        threads.emplace_back(fast_index_add_worker<T>, output, lookup_table, indices, start, end);
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+}
+
+template <typename T>
+void fast_index_set_worker(T* output, const T* lookup_table, const uint8_t* indices, int64_t start, int64_t end) {
+    for (int64_t i = start; i < end; ++i) {
+        output[i] = lookup_table[indices[i]];
+    }
+}
+
+template <typename T>
+void fast_index_set(T* output, const T* lookup_table, const uint8_t* indices, int64_t n) {
+    size_t num_threads = get_num_threads();
+    std::vector<std::thread> threads;
+    int64_t chunk_size = n / num_threads;
+
+    for (size_t i = 0; i < num_threads; ++i) {
+        int64_t start = i * chunk_size;
+        int64_t end = (i == num_threads - 1) ? n : (i + 1) * chunk_size;
+        threads.emplace_back(fast_index_set_worker<T>, output, lookup_table, indices, start, end);
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+}
+
 void ring_allreduce(
     torch::Tensor& tensor,
     c10d::ReduceOp op,
@@ -52,7 +120,27 @@ void ring_allreduce(
             recv_work[step % BUFFER_COUNT]->wait();
             send_lookup_work[step % BUFFER_COUNT]->wait();
             recv_lookup_work[step % BUFFER_COUNT]->wait();
-            chunks[send_chunk].add_(recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)}));
+            //chunks[send_chunk].add_(recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)}));
+
+            auto& chunk = chunks[send_chunk];
+            auto& lookup = recv_lookup_buffer[step % BUFFER_COUNT];
+            auto& indices = recv_buffer[step % BUFFER_COUNT];
+
+            auto start = std::chrono::high_resolution_clock::now();
+
+            fast_index_add_omp<float>(
+                static_cast<float*>(chunk.data_ptr()),
+                static_cast<const float*>(lookup.data_ptr()),
+                static_cast<const uint8_t*>(indices.data_ptr()),
+                chunk.numel()
+            );
+
+            // End timing
+            auto end = std::chrono::high_resolution_clock::now();
+
+            // Calculate and print the duration
+            std::chrono::duration<double, std::milli> duration = end - start;
+            std::cout << "fast_index_add execution time: " << duration.count() << " ms" << std::endl;
         }
 
         if (step <= (world_size - 1) * BUFFER_COUNT) {
@@ -79,10 +167,17 @@ void ring_allreduce(
         }
     }
     
+    auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < BUFFER_COUNT; ++i) {
         std::tie(send_buffer[0], send_lookup_buffer[0]) = uniform_8bit_quantize(chunks[i + rank * BUFFER_COUNT], true);
         chunks[i + rank * BUFFER_COUNT].copy_(send_lookup_buffer[0].index({send_buffer[0].to(torch::kLong)}));
     }
+    // End timing
+    auto end = std::chrono::high_resolution_clock::now();
+
+    // Calculate and print the duration
+    std::chrono::duration<double, std::milli> duration = end - start;
+    std::cout << "quantize_time: " << duration.count() << " ms" << std::endl;
 
     // Reset buffers for the second phase
     recv_buffer.clear();
@@ -108,9 +203,19 @@ void ring_allreduce(
             recv_work[step % BUFFER_COUNT]->wait();
             send_lookup_work[step % BUFFER_COUNT]->wait();
             recv_lookup_work[step % BUFFER_COUNT]->wait();
-            auto a = recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)});
-            chunks[send_chunk].copy_(a);
+            //auto a = recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)});
+            //chunks[send_chunk].copy_(a);
             //chunks[send_chunk].copy_(recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)}).to(tensor.dtype()));
+            auto& chunk = chunks[send_chunk];
+            auto& lookup = recv_lookup_buffer[step % BUFFER_COUNT];
+            auto& indices = recv_buffer[step % BUFFER_COUNT];
+
+            fast_index_set_omp<float>(
+                static_cast<float*>(chunk.data_ptr()),
+                static_cast<const float*>(lookup.data_ptr()),
+                static_cast<const uint8_t*>(indices.data_ptr()),
+                chunk.numel()
+            );
         }
 
         if (step <= (world_size - 1) * BUFFER_COUNT) {
@@ -140,5 +245,5 @@ PYBIND11_MODULE(collectives, m) {
         py::arg("tensor"),
         py::arg("op"),
         py::arg("pg")
-    )
+    );
 }

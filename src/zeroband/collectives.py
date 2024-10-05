@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Callable, Optional, TypeAlias
 import torch
 import torch.distributed as dist
+from zeroband.C.collectives import ring_allreduce as ring_allreduce_c
 
 AllReduceFunc: TypeAlias = Callable[
     [torch.Tensor, dist.ReduceOp, Optional[dist.ProcessGroup], Optional[torch.dtype]], None
@@ -180,9 +181,11 @@ def ring_allreduce(
 class AllReduceBackend(Enum):
     GLOO = "gloo"
     CUSTOM = "custom"
+    CINT8 = "cint8"
 
 
 ALL_REDUCE_FN: dict[AllReduceBackend, AllReduceFunc] = {
     AllReduceBackend.GLOO: gloo_all_reduce,
     AllReduceBackend.CUSTOM: ring_allreduce,
+    AllReduceBackend.CINT8: ring_allreduce_c,
 }

@@ -11,7 +11,7 @@ collectives_ops = cpp_extension.load(
     name="collectives",
     sources=[COLLECTIVES_CSRC_PATH],
     extra_cflags=["-O3"],
-    verbose=True,
+    verbose=False,
     extra_include_paths=INCLUDES,
 )
 
@@ -23,4 +23,6 @@ def ring_allreduce(
     transfer_dtype: Optional[torch.dtype] = None,
     quantization_func: Optional[Callable] = None,
 ) -> None:
+    if group is None:
+        group = dist.distributed_c10d._get_default_group()
     collectives_ops.ring_allreduce(tensor, op, group)

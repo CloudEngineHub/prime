@@ -200,6 +200,7 @@ def train(config: Config):
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
         # time.sleep(4)
+        diloco.fake_step(model)
         tmp_folder = tempfile.TemporaryDirectory()
         with tmp_folder:
             path = tmp_folder.name

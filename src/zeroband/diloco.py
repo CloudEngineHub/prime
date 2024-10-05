@@ -73,7 +73,7 @@ class Diloco:
         )
         self._logger.debug("offload model to cpu")
 
-    def sync_pseudo_gradient(self, model: nn.Module):
+    def sync_pseudo_gradient(self, model: nn.Module, fake: bool = False):
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
@@ -83,7 +83,10 @@ class Diloco:
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
-            param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+            if fake:
+                param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
+            else:
+                param_offloaded.grad = torch.zeros_like(param_offloaded.data)
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / global_pg.size()
@@ -127,3 +130,10 @@ class Diloco:
             self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
         self.sync_inner_model(model)
+
+    def fake_step(self, model: nn.Module):
+        """
+        Fake step the optimizer
+        """
+        self.sync_pseudo_gradient(model, fake=True)
+        self._logger.info("all reduce pseudo gradient with zeros tensor")

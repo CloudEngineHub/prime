@@ -94,6 +94,7 @@ class CkptManager:
 
     def __init__(
         self,
+        ckpt_path: str | None,
         model: nn.Module,
         optimizer: Optimizer,
         scheduler: LambdaLR,
@@ -103,6 +104,10 @@ class CkptManager:
         diloco_offloaded_optimizer: Optimizer | None,
         live_ckpt_server: bool = False,
     ):
+        self.ckpt_path = ckpt_path
+        if ckpt_path is None and live_ckpt_server:
+            raise ValueError("ckpt_path must be provided if live_ckpt_server is True")
+
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -125,7 +130,7 @@ class CkptManager:
         self.async_save_process: list[multiprocessing.Process] = []
 
         if live_ckpt_server:
-            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank)
+            self.live_server = CkptLiveServer(port=8000 + self.world_info.global_rank, ckpt_path=self.ckpt_path)
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -142,7 +147,7 @@ class CkptManager:
             # main reason is that we actually don't a cpu model but just a list of cpu parameters.
             self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
-    def save(self, ckpt_path: str, remote_ckpt_path: str | None) -> None:
+    def save(self, remote_ckpt_path: str | None) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -154,8 +159,8 @@ class CkptManager:
         time_start = time.perf_counter()
         world_info = get_world_info()
 
-        og_ckpt_path = ckpt_path
-        ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
+        og_ckpt_path = self.ckpt_path
+        ckpt_path = os.path.join(self.ckpt_path, f"step_{self.training_progress.step}")
         if self.diloco_offloaded_optimizer:
             # here we save model and offloaded optimizer on each diloco rank even tho they are the same
             # this is done for two reasons:
@@ -185,22 +190,22 @@ class CkptManager:
 
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-        gc.collect()  # because we are badass engineer
+        gc.collect()
 
         if remote_ckpt_path is not None:
             self._async_save_remote(ckpt_path, remote_ckpt_path)
 
-    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str):
+    def _async_save_remote(self, remote_ckpt_path: str):
         """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
         specific libraries (e.g. s3fs)
         """
 
         def rsync():
             time_start = time.perf_counter()
-            self._logger.info(f"start pushing {ckpt_path} to {remote_ckpt_path} asynchronously")
-            rsync_fsspec(ckpt_path, destination=remote_ckpt_path)
+            self._logger.info(f"start pushing {self.ckpt_path} to {remote_ckpt_path} asynchronously")
+            rsync_fsspec(self.ckpt_path, destination=remote_ckpt_path)
             self._logger.info(
-                f"finish pushing {ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
+                f"finish pushing {self.ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
             )
 
         processes = multiprocessing.Process(target=rsync, daemon=True)
@@ -256,8 +261,9 @@ class CkptManager:
 
 
 class CkptLiveServer:
-    def __init__(self, port: int):
+    def __init__(self, port: int, ckpt_path: str):
         self.port = port
+        self.ckpt_path = ckpt_path
         self._logger = get_logger()
 
         self._process = multiprocessing.Process(target=self._start_http_server, daemon=True)
@@ -267,6 +273,7 @@ class CkptLiveServer:
         import http.server
         import socketserver
 
+        os.chdir(self.ckpt_path)
         with socketserver.TCPServer(("", self.port), http.server.SimpleHTTPRequestHandler) as httpd:
             self._logger.debug(f"Start serving live ckpt on {self.port}")
             httpd.serve_forever()

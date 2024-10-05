@@ -178,6 +178,7 @@ def train(config: Config):
     training_progress = TrainingProgress(total_tokens=0, outer_step=0, step=0)
 
     ckpt_manager = CkptManager(
+        ckpt_path=config.ckpt.path if config.ckpt is not None else None,
         model=model,
         optimizer=inner_optimizer,
         scheduler=scheduler,
@@ -198,14 +199,14 @@ def train(config: Config):
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
-        time.sleep(4)
+        # time.sleep(4)
         tmp_folder = tempfile.TemporaryDirectory()
         with tmp_folder:
             path = tmp_folder.name
             # path = "my_outputs"
             resume_path = os.path.join(path, f"latest/diloco_{world_info.global_rank - 1}")
             wget(
-                source=f"http://localhost:{8000+world_info.global_rank - 1}/outputs/latest/diloco_{world_info.global_rank - 1}",
+                source=f"http://localhost:{8000+world_info.global_rank - 1}/latest/diloco_{world_info.global_rank - 1}",
                 destination=path,
             )
             ckpt_manager.load(resume_ckpt_path=resume_path, direct_diloco_folder=True)
@@ -329,7 +330,7 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
+            ckpt_manager.save(config.ckpt.remote_path)
 
         if config.diloco:
             tokens_per_second = (

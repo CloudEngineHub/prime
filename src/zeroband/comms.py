@@ -355,5 +355,5 @@ class LiveRecovery:
         self.world_info = get_world_info()
 
     def need_live_recovery(self) -> bool:
-        return self.world_info.global_rank == 1
+        return self.world_info.global_rank == 2
         # return False

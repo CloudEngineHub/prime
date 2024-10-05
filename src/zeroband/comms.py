@@ -64,6 +64,8 @@ class ElasticDeviceMesh:
         # Logging
         self._logger.info(f"global_pg size : {self.global_pg.size()}, local_pg size: {self.local_pg.size()}")
 
+        self.live_recovery = LiveRecovery()
+
     def __del__(self):
         self._stop_heartbeat()
         dist.destroy_process_group()
@@ -346,3 +348,11 @@ class ElasticDeviceMesh:
         if maybe_reinit:
             self.maybe_reinit_global_pg()
         return self.global_pg
+
+
+class LiveRecovery:
+    def __init__(self):
+        self.world_info = get_world_info()
+
+    def need_live_recovery(self) -> bool:
+        return self.world_info.global_rank == 1

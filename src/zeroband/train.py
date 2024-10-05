@@ -1,5 +1,6 @@
 import os
 from contextlib import nullcontext
+import tempfile
 from typing import Literal
 import time
 
@@ -22,6 +23,7 @@ from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
 from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils.wget import wget
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
@@ -192,7 +194,12 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
-    model.train()
+    if elastic_device_mesh.live_recovery.need_live_recovery():
+        tmp_folder = tempfile.TemporaryDirectory()
+        with tmp_folder:
+            resume_path = os.path.join(tmp_folder.name, "step_2/")
+            wget(source="http://localhost:8000/outputs/step_2/diloco_1", destination=tmp_folder.name)
+            ckpt_manager.load(resume_ckpt_path=resume_path)
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

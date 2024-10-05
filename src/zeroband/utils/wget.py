@@ -1,11 +1,10 @@
 import subprocess
 
-from zeroband.utils.logging import get_logger
 import shutil
 
 
 def wget(source: str, destination: str) -> None:
-    logger = get_logger()
+    # logger = get_logger()
     cmd = f"wget -r -np -nH --cut-dirs=1 -P {destination} {source}"
 
     if shutil.which("wget") is None:
@@ -14,5 +13,6 @@ def wget(source: str, destination: str) -> None:
     try:
         subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error output: {e.stderr}")
+        # logger.error(f"Error output: {e.stderr}")
+        print(f"Error output: {e.stderr}")
         raise e

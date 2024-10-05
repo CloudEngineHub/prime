@@ -133,8 +133,14 @@ class CkptManager:
         self.async_save_process: list[multiprocessing.Process] = []
 
         if live_ckpt_server:
-            self.live_server = CkptLiveServer(port=LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=SHM_PATH)
-            shutil.rmtree(SHM_PATH)
+            self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
+            shutil.rmtree(self.shm_path, ignore_errors=True)
+            os.makedirs(self.shm_path, exist_ok=True)
+            self.live_server = CkptLiveServer(
+                port=LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=self.shm_path
+            )
+        else:
+            self.shm_path = None
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer
@@ -156,7 +162,7 @@ class CkptManager:
         Save the latest checkpoint in shared memory.
         """
         time_start = time.perf_counter()
-        ckpt_path = os.path.join(SHM_PATH, "latest")
+        ckpt_path = self.shm_path
         self._save(ckpt_path)
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
@@ -182,9 +188,8 @@ class CkptManager:
             self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         else:
-            shm_path = os.path.join(SHM_PATH, "latest")
             self._async_save_remote(
-                shm_path, step_ckpt_path, os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
+                self.shm_path, step_ckpt_path, os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
             )
 
     def _save(self, ckpt_path: str):
@@ -243,10 +248,11 @@ class CkptManager:
             process.join()
 
     def _del__(self):
-        os.remove(SHM_PATH)
-        self.wait_async_save_process()
         if self.live_server is not None:
+            shutil.rmtree(self.shm_path, ignore_errors=True)
             self.live_server.stop()
+
+        self.wait_async_save_process()
 
     def load(self, resume_ckpt_path: str, diloco_rank: int | None = None) -> None:
         """
@@ -284,7 +290,8 @@ class CkptManager:
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
     def download_and_load_ckpt_from_peers(self, adress: str):
-        path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
+        ckpt_path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
+        path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
         if os.path.exists(path):
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
@@ -293,15 +300,15 @@ class CkptManager:
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
             wget(
-                source=f"http://{adress}/latest/diloco_{dest_rank}",
+                source=f"http://{adress}/diloco_{dest_rank}",
                 destination=path,
             )
             wget(
-                source=f"http://{adress}/latest/diloco_{dest_rank}/.metadata",
+                source=f"http://{adress}/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
         dist.barrier()
-        self.load(resume_ckpt_path=path, diloco_rank=dest_rank)
+        self.load(resume_ckpt_path=ckpt_path)
 
 
 class CkptLiveServer:

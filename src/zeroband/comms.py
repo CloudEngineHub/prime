@@ -46,6 +46,8 @@ class ElasticDeviceMesh:
 
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
+        self.live_recovery = LiveRecovery()
+
         if self.world_info.global_world_size > 1:
             self._init_global_pg()
 
@@ -63,8 +65,6 @@ class ElasticDeviceMesh:
 
         # Logging
         self._logger.info(f"global_pg size : {self.global_pg.size()}, local_pg size: {self.local_pg.size()}")
-
-        self.live_recovery = LiveRecovery()
 
     def __del__(self):
         self._stop_heartbeat()
@@ -160,6 +160,7 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
             self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
             prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
+            self.live_recovery.need_live_recovery = True
         else:
             # TODO: Could be in "reinit" status. We probably just recurse until running in this case
             raise RuntimeError(f"Unknown status {self.global_status}")
@@ -353,7 +354,4 @@ class ElasticDeviceMesh:
 class LiveRecovery:
     def __init__(self):
         self.world_info = get_world_info()
-
-    def need_live_recovery(self) -> bool:
-        return self.world_info.global_rank == 2
-        # return False
+        self.need_live_recovery = False

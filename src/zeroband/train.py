@@ -215,9 +215,10 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
 
-    if elastic_device_mesh.live_recovery.need_live_recovery():
+    if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers()
         diloco.fake_step(model)
+        elastic_device_mesh.live_recovery.need_live_recovery = False
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

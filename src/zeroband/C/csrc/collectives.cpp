@@ -87,8 +87,6 @@ void ring_allreduce(
     auto flat_tensor = tensor.view({tensor.numel()});
     std::vector<torch::Tensor> chunks = flat_tensor.chunk(world_size * BUFFER_COUNT);
 
-    TORCH_CHECK(flat_tensor.size(0) % (world_size * BUFFER_COUNT) == 0, "Tensor size must be divisible by world size");
-
     // Temporary buffers for transferring data
     int num_buffers = BUFFER_COUNT * world_size;
     std::vector<torch::Tensor> recv_buffer;
@@ -120,7 +118,6 @@ void ring_allreduce(
             recv_work[step % BUFFER_COUNT]->wait();
             send_lookup_work[step % BUFFER_COUNT]->wait();
             recv_lookup_work[step % BUFFER_COUNT]->wait();
-            //chunks[send_chunk].add_(recv_lookup_buffer[step % BUFFER_COUNT].index({recv_buffer[step % BUFFER_COUNT].to(torch::kLong)}));
 
             auto& chunk = chunks[send_chunk];
             auto& lookup = recv_lookup_buffer[step % BUFFER_COUNT];

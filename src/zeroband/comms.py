@@ -237,14 +237,17 @@ class ElasticDeviceMesh:
                 self._logger.warning(f"Node {i} has no heartbeat")
         return dead_nodes
 
-    def _resolve_world(self):
+    def _resolve_world(self, admit_joiners: bool = False):
         """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing."""
         # Find joiners
-        joiners = self._get_joiners()
+        if admit_joiners:
+            joiners = self._get_joiners()
+        else:
+            joiners = []
 
         # Check for dead nodes
         dead_nodes = self._check_heartbeats()
-        self._logger.debug(f"Joiners: {joiners}, Dead nodes: {dead_nodes}")
+        self._logger.debug(f"Joiners ({'' if admit_joiners else 'not'} admitting): {joiners}, Dead nodes: {dead_nodes}")
 
         # If no joiners or dead nodes, no resolution needed
         if len(joiners) == 0 and len(dead_nodes) == 0:
@@ -268,7 +271,7 @@ class ElasticDeviceMesh:
         # Set status to "reinit"
         self.global_store.set("status", "reinit")
 
-    def maybe_reinit_global_pg(self):
+    def maybe_reinit_global_pg(self, admit_joiners: bool = False):
         """Reinitialize the global_pg if there are joiners or dead nodes."""
 
         if self.world_info.global_world_size == 1:
@@ -278,7 +281,7 @@ class ElasticDeviceMesh:
         time_start = time.perf_counter()
         self._logger.debug("Resolving world")
         if self._global_leader:
-            self._resolve_world()
+            self._resolve_world(admit_joiners=admit_joiners)
             self.global_store.set("resolved_time", str(time.time()))
         else:
             while (ans := self.global_store.get("resolved_time").decode("utf-8")) == self._last_resolved_time:

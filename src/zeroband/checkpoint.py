@@ -146,12 +146,15 @@ class CkptManager:
         """
         Each rank will save the right shard of the model and optimizer.
 
-        Saving is done inplace
+        Saving is done inplace.
+
+        Save in the subfolder `step_<step>` and create a symlink `latest`.
         """
 
         time_start = time.perf_counter()
         world_info = get_world_info()
 
+        og_ckpt_path = ckpt_path
         ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
         if self.diloco_offloaded_optimizer:
             # here we save model and offloaded optimizer on each diloco rank even tho they are the same
@@ -173,6 +176,12 @@ class CkptManager:
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
             with open(os.path.join(ckpt_path, f"__{world_info.local_rank}_0.pt"), "wb") as f:
                 torch.save({"data_loader": self.dataloader.state_dict()}, f)
+
+            ## create a symlink from step_{now} to latest
+            latest_link = os.path.join(og_ckpt_path, "latest")
+            if os.path.islink(latest_link):
+                os.unlink(latest_link)
+            os.symlink(f"step_{self.training_progress.step}", latest_link)
 
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
@@ -211,7 +220,7 @@ class CkptManager:
         if self.live_server is not None:
             self.live_server.stop()
 
-    def load(self, resume_ckpt_path: str) -> None:
+    def load(self, resume_ckpt_path: str, direct_diloco_folder: bool = False) -> None:
         """
         loading should be done after fsdp wrap and optimizer init.
         Each rank will load the right shard of the model and optimizer.
@@ -219,12 +228,14 @@ class CkptManager:
 
         `resume_ckpt_path` should point to a specific step and not to the base ckpt folder. Example: `ckpt_path/step_100`
 
-        Loading is done inplace
+        Loading is done inplace.
+
+        direct_diloco_folder = False. mean that `diloco_rank` is added to the resume_ckpt_path.
         """
         time_start = time.perf_counter()
 
         world_info = get_world_info()
-        if self.diloco_offloaded_param_list is not None:
+        if self.diloco_offloaded_param_list is not None and not direct_diloco_folder:
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{world_info.diloco_rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)

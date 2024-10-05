@@ -85,6 +85,8 @@ class Config(BaseConfig):
     ckpt: CkptConfig | None = None
     resume: str | None = None
 
+    live_recovery_server: bool = False
+
 
 def train(config: Config):
     sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
@@ -183,7 +185,7 @@ def train(config: Config):
         training_progress=training_progress,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
-        live_ckpt_server=world_info.global_rank == 0,
+        live_ckpt_server=config.live_recovery_server,
     )
 
     if config.train.torch_compile:
@@ -196,14 +198,17 @@ def train(config: Config):
         ckpt_manager.load(resume_ckpt_path=config.resume)
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
+        time.sleep(4)
         tmp_folder = tempfile.TemporaryDirectory()
         with tmp_folder:
-            resume_path = os.path.join(tmp_folder.name, "step_2/")
+            path = tmp_folder.name
+            # path = "my_outputs"
+            resume_path = os.path.join(path, f"latest/diloco_{world_info.global_rank - 1}")
             wget(
-                source=f"http://localhost:{8000+world_info.global_rank - 1}/outputs/step_2/diloco_1",
-                destination=tmp_folder.name,
+                source=f"http://localhost:{8000+world_info.global_rank - 1}/outputs/latest/diloco_{world_info.global_rank - 1}",
+                destination=path,
             )
-            ckpt_manager.load(resume_ckpt_path=resume_path)
+            ckpt_manager.load(resume_ckpt_path=resume_path, direct_diloco_folder=True)
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

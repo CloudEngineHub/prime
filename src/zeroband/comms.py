@@ -125,7 +125,7 @@ class ElasticDeviceMesh:
         # Each rank gets its own global store with global rank 0 as the master
         time_start = time.perf_counter()
         self._logger.info(
-            f"Elastic Device mesh init: Looking for peers via {self.world_info.global_addr}:{self.world_info.global_port}"
+            f"[{self.world_info.global_unique_id}] Elastic Device mesh init: Looking for peers via {self.world_info.global_addr}:{self.world_info.global_port}"
         )
         self._global_leader = self.world_info.global_rank == 0
         self.global_store = dist.TCPStore(
@@ -247,7 +247,7 @@ class ElasticDeviceMesh:
 
         # Check for dead nodes
         dead_nodes = self._check_heartbeats()
-        self._logger.debug(f"Joiners ({'' if admit_joiners else 'not'} admitting): {joiners}, Dead nodes: {dead_nodes}")
+        self._logger.debug(f"Joiners ({'' if admit_joiners else 'not '}admitting): {joiners}, Dead nodes: {dead_nodes}")
 
         # If no joiners or dead nodes, no resolution needed
         if len(joiners) == 0 and len(dead_nodes) == 0:
@@ -279,7 +279,7 @@ class ElasticDeviceMesh:
             return
 
         time_start = time.perf_counter()
-        self._logger.debug("Resolving world")
+        self._logger.debug(f"[{self.world_info.global_unique_id}] Resolving world")
         if self._global_leader:
             self._resolve_world(admit_joiners=admit_joiners)
             self.global_store.set("resolved_time", str(time.time()))

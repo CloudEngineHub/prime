@@ -118,6 +118,12 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
             time.sleep(0.5)  # Give time for bar to queue
 
             edm.maybe_reinit_global_pg()
+            assert edm.mesh_count == 0
+            assert edm.global_pg.size() == global_world_size
+
+            time.sleep(1)  # TODO: I actually don't know why this is necessary
+
+            edm.maybe_reinit_global_pg(admit_joiners=True)
             assert edm.mesh_count == 1
             assert edm.global_pg.size() == global_world_size + 1
 
@@ -192,6 +198,7 @@ def test_elastic_device_mesh_on_off_ramp(world_size: int, global_world_size: int
                         "GLOBAL_RANK": str(global_rank),
                         "GLOBAL_WORLD_SIZE": str(global_world_size),
                         "ZERO_BAND_LOG_LEVEL": "DEBUG",
+                        "ZERO_BAND_LOG_ALL_RANK": "true",
                         "TEST_VALUE": str(global_rank),
                     },
                 )

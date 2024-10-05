@@ -126,21 +126,12 @@ void ring_allreduce(
             auto& lookup = recv_lookup_buffer[step % BUFFER_COUNT];
             auto& indices = recv_buffer[step % BUFFER_COUNT];
 
-            auto start = std::chrono::high_resolution_clock::now();
-
             fast_index_add_omp<float>(
                 static_cast<float*>(chunk.data_ptr()),
                 static_cast<const float*>(lookup.data_ptr()),
                 static_cast<const uint8_t*>(indices.data_ptr()),
                 chunk.numel()
             );
-
-            // End timing
-            auto end = std::chrono::high_resolution_clock::now();
-
-            // Calculate and print the duration
-            std::chrono::duration<double, std::milli> duration = end - start;
-            std::cout << "fast_index_add execution time: " << duration.count() << " ms" << std::endl;
         }
 
         if (step <= (world_size - 1) * BUFFER_COUNT) {
@@ -167,17 +158,19 @@ void ring_allreduce(
         }
     }
     
-    auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < BUFFER_COUNT; ++i) {
         std::tie(send_buffer[0], send_lookup_buffer[0]) = uniform_8bit_quantize(chunks[i + rank * BUFFER_COUNT], true);
-        chunks[i + rank * BUFFER_COUNT].copy_(send_lookup_buffer[0].index({send_buffer[0].to(torch::kLong)}));
-    }
-    // End timing
-    auto end = std::chrono::high_resolution_clock::now();
+        auto& chunk = chunks[i + rank * BUFFER_COUNT];
+        auto& lookup = send_lookup_buffer[0];
+        auto& indices = send_buffer[0];
 
-    // Calculate and print the duration
-    std::chrono::duration<double, std::milli> duration = end - start;
-    std::cout << "quantize_time: " << duration.count() << " ms" << std::endl;
+        fast_index_set_omp<float>(
+            static_cast<float*>(chunk.data_ptr()),
+            static_cast<const float*>(lookup.data_ptr()),
+            static_cast<const uint8_t*>(indices.data_ptr()),
+            chunk.numel()
+        );
+    }
 
     // Reset buffers for the second phase
     recv_buffer.clear();
@@ -220,6 +213,7 @@ void ring_allreduce(
 
         if (step <= (world_size - 1) * BUFFER_COUNT) {
             // Quantize and send
+            // todo(jackmin): this quantization is redundant, we should be able to reuse the quantized values we just received
             std::tie(send_buffer[step % BUFFER_COUNT], send_lookup_buffer[step % BUFFER_COUNT]) = uniform_8bit_quantize(chunks[send_chunk], false);
 
             std::vector<torch::Tensor> send_tensors = {send_lookup_buffer[step % BUFFER_COUNT]};

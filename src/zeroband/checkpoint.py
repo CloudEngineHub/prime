@@ -225,7 +225,7 @@ class CkptManager:
         if self.live_server is not None:
             self.live_server.stop()
 
-    def load(self, resume_ckpt_path: str, direct_diloco_folder: bool = False) -> None:
+    def load(self, resume_ckpt_path: str, diloco_rank: int | None = None) -> None:
         """
         loading should be done after fsdp wrap and optimizer init.
         Each rank will load the right shard of the model and optimizer.
@@ -240,8 +240,9 @@ class CkptManager:
         time_start = time.perf_counter()
 
         world_info = get_world_info()
-        if self.diloco_offloaded_param_list is not None and not direct_diloco_folder:
-            resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{world_info.diloco_rank}")
+        if self.diloco_offloaded_param_list is not None:
+            rank = diloco_rank if diloco_rank is not None else world_info.diloco_rank
+            resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)
         # since we don't load the param list from the state dict as its the same as the model one we just copy
@@ -273,6 +274,7 @@ class CkptLiveServer:
         import http.server
         import socketserver
 
+        os.makedirs(self.ckpt_path, exist_ok=True)
         os.chdir(self.ckpt_path)
         with socketserver.TCPServer(("", self.port), http.server.SimpleHTTPRequestHandler) as httpd:
             self._logger.debug(f"Start serving live ckpt on {self.port}")

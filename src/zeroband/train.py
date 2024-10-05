@@ -1,6 +1,5 @@
 import os
 from contextlib import nullcontext
-import tempfile
 from typing import Literal
 import time
 
@@ -200,17 +199,24 @@ def train(config: Config):
 
     if elastic_device_mesh.live_recovery.need_live_recovery():
         # time.sleep(4)
-        diloco.fake_step(model)
-        tmp_folder = tempfile.TemporaryDirectory()
-        with tmp_folder:
-            path = tmp_folder.name
-            # path = "my_outputs"
-            resume_path = os.path.join(path, f"latest/diloco_{world_info.global_rank - 1}")
+        # diloco.fake_step(model)
+        path = f"/tmp/zeroband/node_{world_info.global_rank}"
+        os.makedirs(path, exist_ok=True)
+        dest_rank = world_info.global_rank - 1
+
+        if world_info.local_rank == 0:
+            # only local rank download the ckpt
             wget(
-                source=f"http://localhost:{8000+world_info.global_rank - 1}/latest/diloco_{world_info.global_rank - 1}",
+                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}",
                 destination=path,
             )
-            ckpt_manager.load(resume_ckpt_path=resume_path, direct_diloco_folder=True)
+            wget(
+                source=f"http://localhost:{8000+dest_rank}/latest/diloco_{dest_rank}/.metadata",
+                destination=path,
+            )
+        dist.barrier(elastic_device_mesh.local_pg)
+
+        ckpt_manager.load(resume_ckpt_path=path, diloco_rank=dest_rank)
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

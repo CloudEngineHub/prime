@@ -2,7 +2,6 @@ from enum import Enum
 from typing import Callable, Optional, TypeAlias
 import torch
 import torch.distributed as dist
-from zeroband.C.collectives import ring_allreduce as ring_allreduce_c
 
 AllReduceFunc: TypeAlias = Callable[
     [torch.Tensor, dist.ReduceOp, Optional[dist.ProcessGroup], Optional[torch.dtype]], None
@@ -33,13 +32,15 @@ class Compression(Enum):
     UINT8 = "uint8"
 
 
-def compressed_all_reduce(
+def all_reduce(
     compression: Compression,
     tensor: torch.Tensor,
     op: dist.ReduceOp = dist.ReduceOp.SUM,
     group: Optional[dist.ProcessGroup] = None,
 ) -> None:
     if compression == Compression.UINT8:
+        from zeroband.C.collectives import ring_allreduce as ring_allreduce_c
+
         return ring_allreduce_c(tensor, op, group)
     else:
         return gloo_all_reduce(tensor, op, group)

@@ -3,7 +3,7 @@ import torch
 from torch.distributed import destroy_process_group, init_process_group, ReduceOp
 import torch.utils.benchmark as benchmark
 
-from zeroband.collectives import Compression, compressed_all_reduce
+from zeroband.collectives import Compression, all_reduce
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from enum import Enum
@@ -43,7 +43,7 @@ def main(config: Config):
     t0 = benchmark.Timer(
         stmt="compressed_all_reduce(compression, mat, op=op)",
         globals={
-            "compressed_all_reduce": compressed_all_reduce,
+            "compressed_all_reduce": all_reduce,
             "mat": mat,
             "compression": config.compression,
             "op": ReduceOp.SUM,

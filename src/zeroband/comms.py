@@ -163,9 +163,13 @@ class ElasticDeviceMesh:
             raise RuntimeError(f"Unknown status {self.global_status}")
 
         # Create process group
+        self._logger.debug(
+            f"Creating global pg with {self.world_info.global_world_size} rank {self.world_info.global_rank}"
+        )
         self.global_pg = dist.ProcessGroupGloo(
             prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
         )
+        self._logger.debug(f"Global pg created with {self.global_pg.size()} peers")
 
         # Update global store values
         if self._global_leader:
@@ -179,6 +183,7 @@ class ElasticDeviceMesh:
         # This is to match the barrier in maybe_reinit_global_pg.
         # We might be able to get away with only doing in joining path.
         # Let's not risk it for now though.
+        self._logger.debug("Barrier on global pg")
         dist.barrier(self.global_pg)
         self._last_resolved_time = self.global_store.get("resolved_time").decode("utf-8")
         self._logger.info(

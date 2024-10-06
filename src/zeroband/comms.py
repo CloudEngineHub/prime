@@ -395,6 +395,11 @@ class LiveRecovery:
 
         self.enable = enable
 
+        if LIVE_RECO_PORT is None:
+            self.port = get_random_available_port()
+        else:
+            self.port = int(LIVE_RECO_PORT)
+
     def init_live_endpoint(self, store: dist.Store):
         """
         Put its own adress to the store so that other nodes can connect to it for live recovery
@@ -402,12 +407,9 @@ class LiveRecovery:
         if not self.enable:
             return
         self.store = dist.PrefixStore("live_reco_adress", store)
-        if LIVE_RECO_PORT is None:
-            port = get_random_available_port()
-        else:
-            port = int(LIVE_RECO_PORT)
-        self._logger.debug(f"Live recovery adress: {LIVE_RECO_ADDR}:{port}")
-        self.store.set(f"adress_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{port}")
+
+        self._logger.debug(f"Live recovery adress: {LIVE_RECO_ADDR}:{self.port}")
+        self.store.set(f"adress_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{self.port}")
 
     def get_adress(self, rank: int) -> str:
         """Get the live recovery adress for a given rank."""

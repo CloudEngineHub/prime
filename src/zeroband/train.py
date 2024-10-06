@@ -77,8 +77,6 @@ class CkptConfig(BaseConfig):
         if self.path is None and self.remote_path is not None:
             raise ValueError("remote_path is set but path is not set")
 
-        return self
-
 
 class Config(BaseConfig):
     # main config
@@ -100,7 +98,6 @@ class Config(BaseConfig):
     def live_reco_very_check(self):
         if self.ckpt.live_recovery and self.diloco is None:
             raise ValueError("Diloco must be set to use live recovery")
-        return self
 
     @model_validator(mode="after")
     def ckpt_diloco_step(self):

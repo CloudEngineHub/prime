@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional
 import torch
 import torch.distributed as dist
 from torch.utils import cpp_extension
@@ -20,8 +20,6 @@ def ring_allreduce(
     tensor: torch.Tensor,
     op: dist.ReduceOp = dist.ReduceOp.SUM,
     group: Optional[dist.ProcessGroup] = None,
-    transfer_dtype: Optional[torch.dtype] = None,
-    quantization_func: Optional[Callable] = None,
 ) -> None:
     if group is None:
         group = dist.distributed_c10d._get_default_group()

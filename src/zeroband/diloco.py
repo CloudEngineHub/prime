@@ -2,6 +2,7 @@ import time
 from pydantic_config import BaseConfig
 import torch
 from torch import nn
+from zeroband.collectives import Compression, compressed_all_reduce
 from zeroband.comms import ElasticDeviceMesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
@@ -12,6 +13,7 @@ import torch.distributed as dist
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
+    compression: Compression = Compression.NO
 
 
 class Diloco:
@@ -72,6 +74,7 @@ class Diloco:
         """
         self._logger.debug("sync pseudo gradient")
         global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
@@ -79,7 +82,8 @@ class Diloco:
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / global_pg.size()
-            dist.all_reduce(param_offloaded.grad, op=dist.ReduceOp.SUM, group=global_pg)
+
+            compressed_all_reduce(self.config.compression, param_offloaded.grad, dist.ReduceOp.SUM, global_pg)
             # todo async here
 
     def sync_inner_model(self, model: nn.Module):

@@ -4,6 +4,8 @@ import subprocess
 import pytest
 import socket
 
+from zeroband.diloco import Compression
+
 
 def get_random_available_port_list(num_port):
     # https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number
@@ -81,3 +83,11 @@ def test_act_ckpt():
 def test_act_ckpt_num():
     num_gpus = [1, 2]
     _test_multi_gpu(num_gpus, "debug/normal.toml", extra_args=["--train.ac_ckpt", "2"])
+
+
+@pytest.mark.parametrize(
+    "backend", [Compression.NO, Compression.UINT8]
+)  # not adding CINT8 because the compile is too slow
+def test_all_reduce_diloco(backend: Compression):
+    num_gpus = [2, 1]
+    _test_multi_gpu(num_gpus, "debug/diloco.toml", extra_args=["--diloco.compression", backend.value])

@@ -219,7 +219,6 @@ def train(config: Config):
             elastic_device_mesh.live_recovery.get_adress(world_info.global_rank - 1)
         )
         diloco.fake_step(model)
-        elastic_device_mesh.live_recovery.need_live_recovery = False
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
@@ -247,7 +246,11 @@ def train(config: Config):
 
         time_start_outer = time.perf_counter()
 
-        elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+        if not elastic_device_mesh.live_recovery.need_live_recovery:
+            elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+        else:
+            elastic_device_mesh.live_recovery.need_live_recovery = False
+
         # at the beginning of the outer steps we allow joiner to arrive.
         # We maybe reinit before the all reduce but only node to leave not to join anymore
 

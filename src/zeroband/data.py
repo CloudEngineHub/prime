@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Generator, Optional, List, Dict
+from typing import Any, Generator, Optional, List, Dict, Union
 from pydantic_config import BaseConfig
 from zeroband.utils.logging import get_logger
 
@@ -124,6 +124,15 @@ def _get_datafiles(path: str, name: Optional[str] = None, split: str = "train") 
     return builder_config[name].data_files[split]
 
 
+def _nice_print(kwargs: Dict[str, Union[str, List[str]]]) -> str:
+    def _foo(a):
+        if isinstance(a, list):
+            return str(a[:5]) + "..." + str(a[-5:]) if len(a) > 10 else str(a)
+        return str(a)
+
+    return str({k: _foo(v) for k, v in kwargs.items()})
+
+
 def _load_datasets(
     dataset_names: str,
     split: str,
@@ -132,6 +141,7 @@ def _load_datasets(
     streaming: bool = True,
     probabilities: Optional[List[float]] = None,
 ) -> Dataset:
+    logger.debug(dataset_names)
     ds_args = []
     for _ds in dataset_names.split(","):
         _ds_name, _, _ds_config = _ds.partition(":")
@@ -141,8 +151,9 @@ def _load_datasets(
         if data_rank is not None and data_world_size is not None:
             _data_files = _get_datafiles(_ds_name, _ds_config, split)
             _ds_args["data_files"] = _data_files[data_rank::data_world_size]
+        ds_args.append(_ds_args)
 
-    logger.debug(f"Datasets ({split}):\n" + "\n".join(map(str, ds_args)))
+    logger.debug(f"Datasets ({split}):\n" + "\n".join(map(_nice_print, ds_args)))
     ds = interleave_datasets(
         datasets=[load_dataset(**ds_arg, split=split, streaming=streaming) for ds_arg in ds_args],
         probabilities=probabilities,

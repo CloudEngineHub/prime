@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 
 class DataConfig(BaseConfig):
-    dataset_name_or_paths: str = "allenai/c4"
+    dataset_name_or_paths: str = "allenai/c4:en"
     val_dataset_name_or_paths: Optional[str] = None
     seq_length: int = 1024
     fake: bool = False

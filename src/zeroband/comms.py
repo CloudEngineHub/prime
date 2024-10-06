@@ -22,6 +22,8 @@ HEARTBEAT_TIMEOUT = int(
 
 LIVE_RECO_PORT = int(os.environ.get("ZERO_BAND_LIVE_RECO_PORT", "8000"))
 
+LIVE_RECO_ADDR = os.environ.get("ZERO_BAND_LIVE_RECO_ADDR", "localhost")
+
 
 class ElasticDeviceMesh:
     """A class to manage the process groups for elastic training without restarts.
@@ -400,7 +402,7 @@ class LiveRecovery:
             return
         self.store = dist.PrefixStore("live_reco_adress", store)
         port = LIVE_RECO_PORT + self.world_info.global_rank
-        self.store.set(f"adress_{self.world_info.global_unique_id}", f"localhost:{port}")
+        self.store.set(f"adress_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{port}")
 
     def get_adress(self, rank: int) -> str:
         """Get the live recovery adress for a given rank."""

@@ -110,3 +110,4 @@ HF_HUB_ETAG_TIMEOUT=500
 | `ZERO_BAND_EDM_HEARTBEAT_INTERVAL_SECONDS` | Interval in seconds between heartbeats | `2` |
 | `ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS` | Time in seconds after which a node is considered dead if no heartbeat is received | `10` |
 | `ZERO_BAND_LIVE_RECO_PORT` | Port number for the live recovery server | `8000` |  
+| `ZERO_BAND_LIVE_RECO_ADDR` | IP Address for the live recovery server | `localhost` |  

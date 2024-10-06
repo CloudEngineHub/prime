@@ -222,11 +222,11 @@ def train(config: Config):
             # if we don't use diloco we don't print the outer step logs
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
+        elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+
         time_start_outer = time.perf_counter()
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
-
-            elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1

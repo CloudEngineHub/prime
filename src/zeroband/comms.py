@@ -42,13 +42,13 @@ class ElasticDeviceMesh:
     local_pg: dist.ProcessGroup
     global_pg: dist.ProcessGroup
 
-    def __init__(self, backend: str = "cpu:gloo,cuda:nccl"):
+    def __init__(self, backend: str = "cpu:gloo,cuda:nccl", live_recovery: bool = False):
         self._logger = get_logger()
         self.world_info = get_world_info()
 
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
-        self.live_recovery = LiveRecovery()
+        self.live_recovery = LiveRecovery(enable=live_recovery)
 
         if self.world_info.global_world_size > 1:
             self._init_global_pg()
@@ -162,7 +162,7 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
             self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
             prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
-            self.live_recovery.need_live_recovery = True
+            self.live_recovery.need_live_recovery = True if self.live_recovery.enable else False
         else:
             # TODO: Could be in "reinit" status. We probably just recurse until running in this case
             raise RuntimeError(f"Unknown status {self.global_status}")
@@ -356,16 +356,20 @@ class ElasticDeviceMesh:
 
 
 class LiveRecovery:
-    def __init__(self):
+    def __init__(self, enable):
         self.world_info = get_world_info()
         self.need_live_recovery = False
         self.store: dist.Store | None = None
         self.world_info = get_world_info()
 
+        self.enable = enable
+
     def init_live_endpoint(self, store: dist.Store):
         """
         Put its own adress to the store so that other nodes can connect to it for live recovery
         """
+        if not self.enable:
+            return
         self.store = dist.PrefixStore("live_reco_adress", store)
         port = LIVE_RECO_PORT + self.world_info.global_rank
         self.store.set(f"adress_{self.world_info.global_unique_id}", f"localhost:{port}")

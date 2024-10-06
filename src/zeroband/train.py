@@ -164,7 +164,7 @@ def train(config: Config):
         num = 1 if isinstance(config.train.ac_ckpt, bool) else config.train.ac_ckpt
         apply_ac_ckpt(model, num)
 
-    elastic_device_mesh = ElasticDeviceMesh()
+    elastic_device_mesh = ElasticDeviceMesh(live_recovery=config.ckpt.live_recovery)
 
     model = FSDP(
         model,

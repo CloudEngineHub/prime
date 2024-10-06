@@ -30,7 +30,13 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     if logger is not None:
         return logger
 
-    world_info = get_world_info()
+    try:
+        world_info = get_world_info()
+    except KeyError:
+        from zeroband.utils.world_info import WorldInfo
+
+        world_info = WorldInfo.__new__(WorldInfo)
+        world_info.local_rank = 0
     logger = logging.getLogger(name or __name__)
 
     log_level = os.getenv("ZERO_BAND_LOG_LEVEL", "INFO")

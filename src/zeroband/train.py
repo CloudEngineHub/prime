@@ -20,6 +20,7 @@ import torch.distributed as dist
 from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
+from zeroband.loss import cross_entropy_max_z_loss
 
 from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
@@ -47,6 +48,9 @@ class OptimConfig(BaseConfig):
     warmup_steps: int = 1000
     total_steps: int = 88_000
     batch_size: int = 512
+
+    z_loss: bool = False
+    z_loss_weight: float = 2e-4
 
 
 class MemoryProfilerConfig(BaseConfig):
@@ -225,6 +229,8 @@ def train(config: Config):
         time_start_outer = time.perf_counter()
         for _inner_step in range(num_inner_steps):
             loss_batch = 0
+            if config.optim.z_loss:
+                z_loss_batch = 0
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -237,12 +243,21 @@ def train(config: Config):
                     flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
                     flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                    loss = (
-                        F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
-                        / gradient_accumulation_steps
-                    )
+                    if config.optim.z_loss is not None:
+                        ce_loss, z_loss = cross_entropy_max_z_loss(
+                            flatten_logits, flatten_labels, config.optim.z_loss_weight, tokenizer.pad_token_id
+                        )
+                        loss_batch += ce_loss.detach()
+                        z_loss_batch += z_loss.detach()
+
+                        loss = ce_loss + z_loss
+
+                    else:
+                        loss = F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
+                        loss_batch += ce_loss.detach()
+
+                    loss /= gradient_accumulation_steps
                     loss.backward()
-                    loss_batch += loss.detach()
 
             model.clip_grad_norm_(1.0)  # gradient clipping
             inner_optimizer.step()
@@ -254,6 +269,8 @@ def train(config: Config):
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
             dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+
             # syncing loss across all data parallel rank within a nodes
 
             new_tokens = config.data.seq_length * config.optim.batch_size
@@ -273,6 +290,9 @@ def train(config: Config):
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": training_progress.total_tokens,
             }
+            if config.optim.z_loss:
+                metrics["z_loss"] = z_loss_batch.item()
+
             if config.train.memory_monitor:
                 peak_gpu_stats = gpu_mem_monitor.get_peak_stats()
                 metrics.update(peak_gpu_stats)

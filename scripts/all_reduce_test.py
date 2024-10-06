@@ -1,9 +1,10 @@
 from pydantic_config import BaseConfig, parse_argv
 import torch
-from torch.distributed import destroy_process_group, init_process_group, ReduceOp
+from torch.distributed import ReduceOp
 import torch.utils.benchmark as benchmark
 
 from zeroband.collectives import Compression, all_reduce
+from zeroband.comms import ElasticDeviceMesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from enum import Enum
@@ -34,19 +35,22 @@ class Config(BaseConfig):
 def main(config: Config):
     world_info = get_world_info()
 
+    edm = ElasticDeviceMesh()
+
     mat = torch.rand(1, config.size_model)
 
     logger.info(
-        f"\n ======== Benchmark all reduce between {world_info.world_size} gpus over {world_info.nnodes} nodes =========\n"
+        f"\n ======== Benchmark all reduce between {world_info.world_size} gpus over {edm.global_pg.size()} nodes =========\n"
     )
 
     t0 = benchmark.Timer(
-        stmt="compressed_all_reduce(compression, mat, op=op)",
+        stmt="all_reduce(compression, mat, op=op, group=group)",
         globals={
-            "compressed_all_reduce": all_reduce,
+            "all_reduce": all_reduce,
             "mat": mat,
             "compression": config.compression,
             "op": ReduceOp.SUM,
+            "group": edm.global_pg,
         },
     )
 
@@ -61,8 +65,6 @@ if __name__ == "__main__":
     config = Config(**parse_argv())
 
     torch.set_float32_matmul_precision("high")
-    init_process_group(backend="gloo")
 
     logger = get_logger()
     main(config)
-    destroy_process_group()

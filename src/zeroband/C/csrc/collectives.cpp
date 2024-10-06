@@ -1,5 +1,6 @@
 #include <torch/torch.h>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
+#include <torch/csrc/distributed/c10d/ProcessGroupGloo.hpp>
 #include <compression.cpp>
 
 constexpr int BUFFER_COUNT = 2;
@@ -72,10 +73,11 @@ void fast_index_set(T* output, const T* lookup_table, const uint8_t* indices, in
     }
 }
 
+template <typename T>
 void ring_allreduce(
     torch::Tensor& tensor,
     c10d::ReduceOp op,
-    c10d::ProcessGroup* group
+    T* group
 ) {
     TORCH_CHECK(group != nullptr, "Group must be provided");
     TORCH_CHECK(op == c10d::ReduceOp::SUM || op == c10d::ReduceOp::AVG, "Unsupported reduce operation. Only SUM and AVG are supported.");
@@ -230,7 +232,15 @@ void ring_allreduce(
 PYBIND11_MODULE(collectives, m) {
     m.def(
         "ring_allreduce",
-        &ring_allreduce,
+        &ring_allreduce<c10d::ProcessGroup>,
+        "Ring allreduce implementation",
+        py::arg("tensor"),
+        py::arg("op"),
+        py::arg("pg")
+    );
+    m.def(
+        "ring_allreduce_gloo",
+        &ring_allreduce<c10d::ProcessGroupGloo>,
         "Ring allreduce implementation",
         py::arg("tensor"),
         py::arg("op"),

@@ -203,6 +203,7 @@ def train(config: Config):
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
         live_ckpt_server=config.ckpt.live_recovery,
+        live_recovery_port=elastic_device_mesh.live_recovery.port if config.ckpt.live_recovery else None,
     )
 
     if config.train.torch_compile:

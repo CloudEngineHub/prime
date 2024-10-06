@@ -23,7 +23,6 @@ import torch.distributed as dist
 
 
 from torch.distributed.checkpoint.stateful import Stateful
-from zeroband.comms import LIVE_RECO_PORT
 from zeroband.utils.logging import get_logger
 import warnings
 import logging
@@ -110,6 +109,7 @@ class CkptManager:
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
         live_ckpt_server: bool = False,
+        live_recovery_port: int | None = None,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -132,13 +132,16 @@ class CkptManager:
 
         self.async_save_process: list[multiprocessing.Process] = []
 
+        # live ckot and live reocvyer should be set in the same node
+        assert (
+            live_ckpt_server is None == (live_recovery_port is None)
+        ), "live_ckpt_server and live_recovery_port must be both None or both have values"
+
         if live_ckpt_server:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
             shutil.rmtree(self.shm_path, ignore_errors=True)
             os.makedirs(self.shm_path, exist_ok=True)
-            self.live_server = CkptLiveServer(
-                port=LIVE_RECO_PORT + self.world_info.global_rank, ckpt_path=self.shm_path
-            )
+            self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=self.shm_path)
         else:
             self.shm_path = None
 

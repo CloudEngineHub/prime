@@ -2,6 +2,7 @@ import sys
 import os
 import time
 from torch.distributed.device_mesh import init_device_mesh
+from zeroband.utils import get_random_available_port
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
@@ -20,7 +21,7 @@ HEARTBEAT_TIMEOUT = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS", "10")
 )  # Time in seconds after which a node is considered dead if no heartbeat is received
 
-LIVE_RECO_PORT = int(os.environ.get("ZERO_BAND_LIVE_RECO_PORT", "8000"))
+LIVE_RECO_PORT = os.environ.get("ZERO_BAND_LIVE_RECO_PORT", None)
 
 LIVE_RECO_ADDR = os.environ.get("ZERO_BAND_LIVE_RECO_ADDR", "localhost")
 
@@ -387,10 +388,10 @@ todo
 
 class LiveRecovery:
     def __init__(self, enable):
-        self.world_info = get_world_info()
         self.need_live_recovery = False
         self.store: dist.Store | None = None
         self.world_info = get_world_info()
+        self._logger = get_logger()
 
         self.enable = enable
 
@@ -401,7 +402,11 @@ class LiveRecovery:
         if not self.enable:
             return
         self.store = dist.PrefixStore("live_reco_adress", store)
-        port = LIVE_RECO_PORT + self.world_info.global_rank
+        if LIVE_RECO_PORT is None:
+            port = get_random_available_port()
+        else:
+            port = int(LIVE_RECO_PORT)
+        self._logger.debug(f"Live recovery adress: {LIVE_RECO_ADDR}:{port}")
         self.store.set(f"adress_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{port}")
 
     def get_adress(self, rank: int) -> str:

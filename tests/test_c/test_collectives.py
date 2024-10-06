@@ -12,18 +12,34 @@ TIME_COUNT = 2
 
 
 @pytest.mark.parametrize("world_size", [2, 4])
-def test_ring_allreduce(world_size: int, random_available_port: int, dist_environment):
+@pytest.mark.parametrize("pg_source", ["gloo", "default"])
+def test_ring_allreduce(world_size: int, pg_source: str, random_available_port: int, dist_environment):
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, "gloo", rank=rank, world_size=world_size):
             dist.init_process_group(backend="gloo")
             rank = dist.get_rank()
-            pg = dist.distributed_c10d._get_default_group()
+            world_size = dist.get_world_size()
+            if pg_source == "gloo":
+                store = dist.TCPStore(
+                    host_name="localhost",
+                    port=random_available_port + 1,
+                    world_size=world_size,
+                    is_master=(rank == 0),
+                )
+                pg = dist.distributed_c10d.ProcessGroupGloo(store, rank, world_size)
+            else:
+                pg = dist.distributed_c10d._get_default_group()
             a = torch.randn(N) * 10
             b = torch.clone(a)
             c = torch.clone(a)
 
             ring_allreduce(a, dist.ReduceOp.SUM, pg)
-            ring_allreduce_py(b, dist.ReduceOp.SUM, pg, quantization_func=uniform_8bit_quantize)
+            ring_allreduce_py(
+                b,
+                dist.ReduceOp.SUM,
+                dist.distributed_c10d._get_default_group(),
+                quantization_func=uniform_8bit_quantize,
+            )
             dist.all_reduce(c, dist.ReduceOp.SUM, group=pg)
 
             if rank == 0:

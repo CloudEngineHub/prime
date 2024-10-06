@@ -254,7 +254,7 @@ class CkptManager:
 
         self.wait_async_save_process()
 
-    def load(self, resume_ckpt_path: str, diloco_rank: int | None = None) -> None:
+    def load(self, resume_ckpt_path: str, diloco_rank: int | None = None, skip_dataloader: bool = False) -> None:
         """
         loading should be done after fsdp wrap and optimizer init.
         Each rank will load the right shard of the model and optimizer.
@@ -279,11 +279,12 @@ class CkptManager:
             for param_offloaded, param_model in zip(self.diloco_offloaded_param_list, self.model.parameters()):
                 param_offloaded.data.copy_(param_model.data)
 
-        ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
-        with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
-            rank_state_dict = torch.load(f)
+        if not skip_dataloader:
+            ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
+            with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
+                rank_state_dict = torch.load(f)
 
-        self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+            self.dataloader.load_state_dict(rank_state_dict["data_loader"])
 
         self._init_state()
 
@@ -308,7 +309,8 @@ class CkptManager:
                 destination=path,
             )
         dist.barrier()
-        self.load(resume_ckpt_path=ckpt_path)
+        self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
+        # we don't want the dataloader states to be loaded as they are not the same on each rank
 
 
 class CkptLiveServer:

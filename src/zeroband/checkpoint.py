@@ -298,7 +298,7 @@ class CkptManager:
 
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
-            self._logger.info(f"http://{adress}/diloco_{dest_rank}")
+            self._logger.info(f"donwlwod ckpt from http://{adress}/diloco_{dest_rank}")
             wget(
                 source=f"http://{adress}/diloco_{dest_rank}",
                 destination=path,

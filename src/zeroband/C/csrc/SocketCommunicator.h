@@ -1,6 +1,10 @@
+#ifndef SOCKET_COMMUNICATOR_H
+#define SOCKET_COMMUNICATOR_H
+
 #include <string>
 #include <thread>
 #include <atomic>
+#include <functional>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -15,6 +19,9 @@ public:
     // Method to send data
     void sendData(const std::string& data);
 
+    // Method to set the data callback
+    void setDataCallback(std::function<void(const std::string& data)> callback);
+
     // Destructor: closes sockets and stops listening
     ~SocketCommunicator();
 
@@ -25,13 +32,18 @@ private:
     std::atomic<bool> listening;
     std::thread listen_thread;
 
+    // Data callback function
+    std::function<void(const std::string& data)> data_callback;
+
     // Starts the listening thread
     void startListening();
 
-    // The listening loop that receives data and prints to stdout
+    // The listening loop that receives data and calls the callback
     void listenLoop();
 
     // Disable copying
     SocketCommunicator(const SocketCommunicator&) = delete;
     SocketCommunicator& operator=(const SocketCommunicator&) = delete;
 };
+
+#endif // SOCKET_COMMUNICATOR_H

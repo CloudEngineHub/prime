@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <Python.h>
 
 constexpr size_t BUFFER_SIZE = 1024;
 
@@ -41,6 +42,22 @@ SocketCommunicator::SocketCommunicator(const std::string& listen_address, unsign
 
     // Start the listening thread
     startListening();
+}
+
+SocketCommunicator::~SocketCommunicator()
+{
+    listening = false;
+    if (listen_thread.joinable()) {
+        listen_thread.join();
+    }
+
+    if (recv_sockfd >= 0) {
+        close(recv_sockfd);
+    }
+
+    if (send_sockfd >= 0) {
+        close(send_sockfd);
+    }
 }
 
 void SocketCommunicator::startListening()
@@ -101,18 +118,47 @@ void SocketCommunicator::sendData(const std::string& data)
     }
 }
 
-SocketCommunicator::~SocketCommunicator()
+void SocketCommunicator::setDataCallback(std::function<void(const std::string& data)> callback)
 {
-    listening = false;
-    if (listen_thread.joinable()) {
-        listen_thread.join();
-    }
+    data_callback = callback;
+}
 
-    if (recv_sockfd >= 0) {
-        close(recv_sockfd);
-    }
+void SocketCommunicator::listenLoop()
+{
+    const size_t BUFFER_SIZE = 1024;
+    char buffer[BUFFER_SIZE];
 
-    if (send_sockfd >= 0) {
-        close(send_sockfd);
+    while (listening) {
+        struct sockaddr_in sender_addr;
+        socklen_t addrlen = sizeof(sender_addr);
+        ssize_t received_bytes = recvfrom(recv_sockfd, buffer, BUFFER_SIZE, 0,
+                                          (struct sockaddr*)&sender_addr, &addrlen);
+        if (received_bytes < 0) {
+            perror("Failed to receive data");
+            continue;
+        }
+
+        // Create a string from the received data
+        std::string data(buffer, received_bytes);
+
+        // Call the data callback if set
+        if (data_callback) {
+            // Acquire GIL before calling Python function
+            PyGILState_STATE gstate;
+            gstate = PyGILState_Ensure();
+
+            try {
+                data_callback(data);
+            } catch (...) {
+                // Handle exceptions to prevent thread termination
+                PyErr_Print();
+            }
+
+            PyGILState_Release(gstate);
+        } else {
+            // If no callback is set, print to stdout (optional)
+            std::cout.write(buffer, received_bytes);
+            std::cout.flush();
+        }
     }
 }

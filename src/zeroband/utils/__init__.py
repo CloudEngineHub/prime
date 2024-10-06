@@ -189,5 +189,5 @@ def get_random_available_port_list(num_port):
     return ports
 
 
-def get_random_available_port(num_port):
-    return get_random_available_port_list(num_port)[0]
+def get_random_available_port():
+    return get_random_available_port_list(1)[0]

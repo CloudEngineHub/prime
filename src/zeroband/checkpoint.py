@@ -134,7 +134,7 @@ class CkptManager:
 
         # live ckot and live reocvyer should be set in the same node
         assert (
-            live_ckpt_server is None == (live_recovery_port is None)
+            live_ckpt_server is None == live_recovery_port is None
         ), "live_ckpt_server and live_recovery_port must be both None or both have values"
 
         if live_ckpt_server:

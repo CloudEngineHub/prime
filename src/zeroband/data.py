@@ -130,6 +130,7 @@ def _load_datasets(
     data_rank: Optional[int] = None,
     data_world_size: Optional[int] = None,
     streaming: bool = True,
+    probabilities: Optional[List[float]] = None,
 ) -> Dataset:
     ds_args = []
     for _ds in dataset_names.split(","):
@@ -142,8 +143,21 @@ def _load_datasets(
             _ds_args["data_files"] = _data_files[data_rank::data_world_size]
 
     logger.debug(f"Datasets ({split}):\n" + "\n".join(map(str, ds_args)))
-    ds = interleave_datasets([load_dataset(**ds_arg, split=split, streaming=streaming) for ds_arg in ds_args])
+    ds = interleave_datasets(
+        datasets=[load_dataset(**ds_arg, split=split, streaming=streaming) for ds_arg in ds_args],
+        probabilities=probabilities,
+    )
     return ds
+
+
+def _get_probabilities(data_config: DataConfig) -> Optional[List[float]]:
+    if data_config.dataset_ratio is None:
+        return None
+    if len(data_config.dataset_name_or_paths.split(",")) != len(data_config.dataset_ratio.split(":")):
+        raise ValueError("Number of datasets and dataset ratios must be the same")
+    nums = [float(i) for i in data_config.dataset_ratio.split(":")]
+    denom = sum(nums)
+    return [i / denom for i in nums]
 
 
 def load_all_datasets(data_config: DataConfig, split: str, max_samples: Optional[int] = None) -> IterableDataset:
@@ -156,6 +170,7 @@ def load_all_datasets(data_config: DataConfig, split: str, max_samples: Optional
         data_rank=data_config.data_rank,
         data_world_size=data_config.data_world_size,
         streaming=data_config.streaming,
+        probabilities=_get_probabilities(data_config),
     )
     if max_samples is not None and data_config.streaming:
         if data_config.max_train_samples is not None:

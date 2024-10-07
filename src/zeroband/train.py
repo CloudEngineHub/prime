@@ -64,6 +64,8 @@ class TrainConfig(BaseConfig):
     memory_monitor: bool = False
     memory_profiler: MemoryProfilerConfig | None = None
 
+    tokenizer_name: str = "mistralai/Mistral-7B-v0.1"  # "meta-llama/Meta-Llama-3-8B" for lamma
+
 
 class CkptConfig(BaseConfig):
     path: str
@@ -105,7 +107,7 @@ def train(config: Config):
             config.ckpt.interval % config.diloco.inner_steps == 0
         ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
 
-    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(config.train.tokenizer_name, use_fast=True)
     tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
 
     logger.debug("tokenizer loaded")

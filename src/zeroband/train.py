@@ -196,7 +196,11 @@ def train(config: Config):
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
-        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
+        metric_logger = logger_cls(
+            project=config.project,
+            config={"config": config.model_dump(), "world_info": world_info.json()},
+            resume=False,
+        )
 
     if config.train.memory_monitor:
         gpu_mem_monitor = GPUMemoryMonitor()

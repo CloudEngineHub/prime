@@ -86,13 +86,13 @@ def get_dataloader(tokenizer, world_size: int, rank: int, batch_size: int, data_
     else:
         ds = load_all_datasets(data_config=data_config, split="train")
 
+        ds = ds.remove_columns([i for i in ds.column_names if i not in ["text"]])
+
         def tokenize_function(data):
             outputs = tokenizer(data["text"], truncation=True, max_length=data_config.seq_length)
             return outputs
 
-        tokenized_datasets = ds.map(
-            tokenize_function, batched=True, remove_columns=["text", "timestamp", "url", "attention_mask"]
-        )
+        tokenized_datasets = ds.map(tokenize_function, batched=True, remove_columns=["text", "attention_mask"])
         train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
     data_collator = collate_causal_mask(

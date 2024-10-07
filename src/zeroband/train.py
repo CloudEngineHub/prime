@@ -108,6 +108,7 @@ class Config(BaseConfig):
             assert (
                 self.ckpt.interval % self.diloco.inner_steps == 0
             ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
+        return self
 
 
 def train(config: Config):

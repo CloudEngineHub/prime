@@ -86,8 +86,6 @@ def get_dataloader(tokenizer, world_size: int, rank: int, batch_size: int, data_
     else:
         ds = load_all_datasets(data_config=data_config, split="train")
 
-        ds = ds.remove_columns([i for i in ds.column_names if i not in ["text"]])
-
         def tokenize_function(data):
             outputs = tokenizer(data["text"], truncation=True, max_length=data_config.seq_length)
             return outputs
@@ -154,10 +152,21 @@ def _load_datasets(
         ds_args.append(_ds_args)
 
     logger.debug(f"Datasets ({split}):\n" + "\n".join(map(_nice_print, ds_args)))
+    logger.debug(f"Probabilities: {probabilities}")
+    logger.debug(f"Loading datasets{' in streaming mode' if streaming else ''}")
+    datasets = []
+    for ds_arg in ds_args:
+        logger.debug(f"Loading dataset: {ds_arg}")
+        _ds = load_dataset(**ds_arg, split=split, streaming=streaming)
+        _ds = _ds.remove_columns([i for i in _ds.column_names if i not in ["text"]])
+        datasets.append(_ds)
+        logger.debug(f"Loaded dataset: {ds_arg}")
+
     ds = interleave_datasets(
-        datasets=[load_dataset(**ds_arg, split=split, streaming=streaming) for ds_arg in ds_args],
+        datasets=datasets,
         probabilities=probabilities,
     )
+    logger.info(f"Loaded datasets ({split})")
     return ds
 
 

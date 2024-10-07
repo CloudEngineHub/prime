@@ -293,6 +293,7 @@ def train(config: Config):
                 memory_profiler.step()
 
         if config.diloco is not None:
+            time_start_inner = time.perf_counter()
             if config.train.log_model_hash:
                 with FSDP.summon_full_params(model):
                     logger.debug("Pre diloco model: %s", get_module_signature(model))
@@ -300,6 +301,8 @@ def train(config: Config):
             if config.train.log_model_hash:
                 with FSDP.summon_full_params(model):
                     logger.debug("Post diloco model: %s", get_module_signature(model))
+
+            diloco_step_time = time.perf_counter() - time_start_inner
 
         training_progress.outer_step += 1
 
@@ -320,6 +323,14 @@ def train(config: Config):
             )
             mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
             logger.info(f"effective mfu: {mfu}")
+            metric_logger.log(
+                {
+                    "effective_mfu": mfu,
+                    "diloco_step_time": diloco_step_time,
+                    "step": training_progress.step,
+                    "outer_step": training_progress.outer_step,
+                }
+            )
 
         if config.train.memory_monitor:
             logger.info(f"outer step peak gpu stats: {gpu_mem_monitor.format_peak_states()}")

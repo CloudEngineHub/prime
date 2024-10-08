@@ -21,7 +21,7 @@ HEARTBEAT_TIMEOUT = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS", "10")
 )  # Time in seconds after which a node is considered dead if no heartbeat is received
 
-LIVE_RECO_PORT = os.environ.get("ZERO_BAND_LIVE_RECO_PORT", 8000)
+LIVE_RECO_PORT = os.environ.get("ZERO_BAND_LIVE_RECO_PORT", None)
 
 LIVE_RECO_ADDR = os.environ.get("ZERO_BAND_LIVE_RECO_ADDR", "localhost")
 

@@ -3,7 +3,6 @@ project = "debug_150m_zero_band"
 
 [train]
 micro_bs = 64 # change this base on the gpu
-sharding_strategy = "SHARD_GRAD_OP"
 
 [optim]
 batch_size = 512

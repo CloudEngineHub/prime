@@ -4,6 +4,7 @@ import time
 from typing import Any
 import torch
 from torch.distributed.fsdp import ShardingStrategy
+from torch.distributed._tensor.api import DTensor
 
 from zeroband.utils.logging import get_logger
 
@@ -106,6 +107,10 @@ def get_tensor_signature(a: torch.Tensor | torch.nn.Parameter) -> str:
     """
     while isinstance(a, torch.nn.Parameter):
         a = a.data
+
+    if isinstance(a, DTensor):
+        a = a.full_tensor()
+
     if a.numel() < TENSOR_SIG_SAMPLE_SIZE:
         b = a.as_strided(size=(a.numel(),), stride=(1,))
     else:
@@ -125,6 +130,34 @@ def get_module_signature(module: torch.nn.Module, compress: bool = True) -> str:
         return hashlib.md5(str(state_dict_sig).encode("utf-8")).hexdigest()
     else:
         return "\n".join(f"{name}: {sig}" for name, sig in state_dict_sig.items())
+
+
+def get_optimizer_signature(optimizer: torch.optim.Optimizer, compress: bool = True) -> str:
+    """
+    Get the optimizer signature
+    """
+
+    def unwrap_tensor(state_dict: dict) -> dict:
+        new_dict = {}
+        for key, value in state_dict.items():
+            if isinstance(value, dict):
+                new_dict[key] = unwrap_tensor(value)
+            elif isinstance(value, torch.Tensor):
+                new_dict[key] = get_tensor_signature(value)
+            else:
+                new_dict[key] = str(value)
+        return new_dict
+
+    state_dict_sig = unwrap_tensor(optimizer.state_dict())
+
+    if compress:
+        return hashlib.md5(str(state_dict_sig).encode("utf-8")).hexdigest()
+    else:
+        return "\n".join(f"{name}: {sig}" for name, sig in state_dict_sig.items())
+
+
+def get_tensor_list_signature(tensor_list: list[torch.Tensor]) -> str:
+    return hashlib.md5(str(tensor_list).encode("utf-8")).hexdigest()
 
 
 class GPUMemoryMonitor:

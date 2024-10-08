@@ -68,6 +68,9 @@ class ElasticDeviceMesh:
         # Start heartbeat
         self._start_heartbeat()
 
+        self.cuda_local_mesh = init_device_mesh("cuda", mesh_shape=(self.local_pg.size(),))
+        self.cpu_local_mesh = init_device_mesh("cpu", mesh_shape=(self.local_pg.size(),))
+
         # Logging
         self._logger.info(f"global_pg size : {self.global_pg.size()}, local_pg size: {self.local_pg.size()}")
 

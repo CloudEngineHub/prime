@@ -1,5 +1,4 @@
 import os
-from contextlib import nullcontext
 from typing import Literal
 import time
 from pydantic import model_validator
@@ -13,16 +12,20 @@ from transformers import (
     AutoTokenizer,
     get_cosine_schedule_with_warmup,
 )
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-)
+
+from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+
 import torch.distributed as dist
 from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils import (
+    GPUMemoryMonitor,
+    PerfCounter,
+    get_module_signature,
+    get_optimizer_signature,
+)
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
@@ -52,8 +55,11 @@ class MemoryProfilerConfig(BaseConfig):
 class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
-    sharding_strategy: str = "SHARD_GRAD_OP"
     ac_ckpt: bool | int = False
+    reshard_after_forward: bool = False  # old shard grad op False mean full shard
+
+    reduce_fp32: bool = False  # should be True if SXM. Keep to false as default for backward compatibility
+
     log_model_hash: bool = False
 
     memory_monitor: bool = False
@@ -82,7 +88,7 @@ class CkptConfig(BaseConfig):
 
 class Config(BaseConfig):
     # main config
-    name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
+    name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "10B", "13B", "26B", "70B"] = "150M"
     type_model: Literal["llama2", "llama3"] = "llama2"
 
     project: str = "zeroband"
@@ -112,8 +118,6 @@ class Config(BaseConfig):
 
 
 def train(config: Config):
-    sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
-
     # batch_size is the total batch size for all GPUs
     assert config.optim.batch_size % world_info.local_world_size == 0
     batch_size = config.optim.batch_size // world_info.local_world_size
@@ -167,12 +171,26 @@ def train(config: Config):
 
     elastic_device_mesh = ElasticDeviceMesh(live_recovery=config.ckpt.live_recovery)
 
-    model = FSDP(
+    mp_policy = MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32 if config.train.reduce_fp32 else None
+    )
+
+    for layer_id, transformer_block in model.layers.items():
+        if config.train.reshard_after_forward:
+            reshard_after_forward = int(layer_id) < len(model.layers) - 1
+        else:
+            reshard_after_forward = False
+        fully_shard(
+            transformer_block,
+            mp_policy=mp_policy,
+            mesh=elastic_device_mesh.cuda_local_mesh,
+            reshard_after_forward=reshard_after_forward,
+        )
+    fully_shard(
         model,
-        sharding_strategy=sharding_strategy,
-        mixed_precision=MixedPrecision(param_dtype=torch.bfloat16),
-        use_orig_params=True,
-        process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
+        mp_policy=mp_policy,
+        mesh=elastic_device_mesh.cuda_local_mesh,
+        reshard_after_forward=config.train.reshard_after_forward,
     )
     logger.debug("model fsdped")
 
@@ -185,7 +203,7 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        diloco = Diloco(config.diloco, model, elastic_device_mesh)
 
     scheduler = get_cosine_schedule_with_warmup(
         inner_optimizer,
@@ -215,6 +233,8 @@ def train(config: Config):
     if config.ckpt.resume is not None:
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
+        if config.train.log_model_hash:
+            logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers(
@@ -242,6 +262,7 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
+
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -257,23 +278,25 @@ def train(config: Config):
             loss_batch = 0
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
+                # no sync if we are accumulating gradients
+                model.set_requires_gradient_sync(not is_accumulating)
+
                 batch = next(train_dataloader_iterator)
                 input_ids = batch["input_ids"].to("cuda")
                 labels = batch["labels"].to("cuda")
 
-                with model.no_sync() if is_accumulating else nullcontext():
-                    logits = model(tokens=input_ids).contiguous()
-                    flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
-                    flatten_labels = rearrange(labels, "b seq -> (b seq)")
+                logits = model(tokens=input_ids).contiguous()
+                flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
+                flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                    loss = (
-                        F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
-                        / gradient_accumulation_steps
-                    )
-                    loss.backward()
-                    loss_batch += loss.detach()
+                loss = (
+                    F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
+                    / gradient_accumulation_steps
+                )
+                loss.backward()
+                loss_batch += loss.detach()
 
-            model.clip_grad_norm_(1.0)  # gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()
             scheduler.step()
             inner_optimizer.zero_grad()
@@ -331,12 +354,15 @@ def train(config: Config):
 
         if config.diloco is not None:
             if config.train.log_model_hash:
-                with FSDP.summon_full_params(model):
-                    logger.debug("Pre diloco model: %s", get_module_signature(model))
+                logger.debug("Pre diloco model: %s", get_module_signature(model))
+
             diloco.step(model)
+
             if config.train.log_model_hash:
-                with FSDP.summon_full_params(model):
-                    logger.debug("Post diloco model: %s", get_module_signature(model))
+                logger.debug("Post diloco model: %s", get_module_signature(model))
+
+            if config.train.log_model_hash:
+                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
         training_progress.outer_step += 1
 

@@ -27,6 +27,7 @@ from zeroband.utils.logging import get_logger
 import warnings
 import logging
 from zeroband.utils.wget import wget
+from torch.distributed._tensor.api import DTensor
 
 from zeroband.utils.world_info import get_world_info
 
@@ -82,6 +83,55 @@ class OptimizerWrapper(Stateful):
             optim_state_dict=state_dict,
             options=StateDictOptions(flatten_optimizer_state_dict=True),
         )
+
+
+def cast_dtensor_to_tensor(state_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Traverse a state dict and cast all DTensor in the state dict to tensor
+    """
+    new_state_dict = {}
+
+    for key, value in state_dict.items():
+        if isinstance(value, dict):
+            new_state_dict[key] = cast_dtensor_to_tensor(value)
+        elif isinstance(value, DTensor):
+            new_state_dict[key] = value.to_local()
+        else:
+            new_state_dict[key] = value
+    return new_state_dict
+
+
+def load_dtensor_state_dict(state_src, loaded_state_dict):
+    for key, value in state_src.items():
+        if isinstance(value, dict):
+            load_dtensor_state_dict(value, loaded_state_dict[key])
+        elif isinstance(value, DTensor):
+            local_tensor = value.to_local()
+
+            local_tensor.copy_(loaded_state_dict[key])
+            loaded_state_dict[key] = value
+        else:
+            loaded_state_dict[key] = value
+
+
+class OuterOptimizerWrapper(Stateful):
+    def __init__(self, optimizer: Optimizer) -> None:
+        self.optimizer = optimizer
+
+    def state_dict(self) -> dict[str, Any]:
+        # the idea here is to cast any DTensor into local tensor
+        state = self.optimizer.state_dict()
+        return cast_dtensor_to_tensor(state)
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        # we pre-init the opt buffer DTensor.
+        # !! this assume that the model have grad buffer init
+        self.optimizer.step()  # pre init buffer
+
+        ## here the idea is for any DTensor, load the value from the state_dict into the local tensor
+        current_state = self.optimizer.state_dict()
+        load_dtensor_state_dict(current_state, state_dict)
+        self.optimizer.load_state_dict(state_dict)
 
 
 class CkptManager:
@@ -150,10 +200,10 @@ class CkptManager:
             "training_progress": self.training_progress,
         }
 
-        if self.diloco_offloaded_optimizer is not None:
-            # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
-            # main reason is that we actually don't a cpu model but just a list of cpu parameters.
-            self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
+        # if self.diloco_offloaded_optimizer is not None:
+        #     # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
+        #     # main reason is that we actually don't a cpu model but just a list of cpu parameters.
+        #     self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
     def save_shm(self) -> None:
         """
@@ -210,7 +260,11 @@ class CkptManager:
 
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
             with open(os.path.join(ckpt_path, f"__{self.world_info.local_rank}_0.pt"), "wb") as f:
-                torch.save({"data_loader": self.dataloader.state_dict()}, f)
+                state = {"data_loader": self.dataloader.state_dict()}
+                if self.diloco_offloaded_optimizer:
+                    state["optimizer"] = OuterOptimizerWrapper(self.diloco_offloaded_optimizer).state_dict()
+
+                torch.save(state, f)
 
         gc.collect()
 
@@ -272,10 +326,11 @@ class CkptManager:
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)
-        # since we don't load the param list from the state dict as its the same as the model one we just copy
-        if self.diloco_offloaded_param_list is not None:
-            for param_offloaded, param_model in zip(self.diloco_offloaded_param_list, self.model.parameters()):
-                param_offloaded.data.copy_(param_model.data)
+
+        self._logger.debug("sync inner model")
+        # todo(refactor): here we should rather let the diloco class handle this logic
+        for param_offloaded, param in zip(self.diloco_offloaded_param_list, self.model.parameters()):
+            param_offloaded.data.to_local().copy_(param.data.to_local())
 
         if not skip_dataloader:
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
@@ -283,6 +338,10 @@ class CkptManager:
                 rank_state_dict = torch.load(f)
 
             self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+
+        if self.diloco_offloaded_optimizer:
+            opt_wrapper = OuterOptimizerWrapper(self.diloco_offloaded_optimizer)
+            opt_wrapper.load_state_dict(rank_state_dict["optimizer"])
 
         self._init_state()
 

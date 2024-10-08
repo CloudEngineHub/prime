@@ -4,7 +4,6 @@ metric_logger_type = "dummy"
 
 [train]
 micro_bs = 8
-sharding_strategy = "FULL_SHARD"
 
 [optim]
 batch_size = 16

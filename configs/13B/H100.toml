@@ -1,8 +1,9 @@
-name_model = "7B"
-project = "debug_7B_zero_band"
+name_model = "13B"
+project = "debug_13B_zero_band"
 
 [train]
 micro_bs = 1
+ac_ckpt = true
 
 [optim]
 batch_size = 1024 #2M tokens bs

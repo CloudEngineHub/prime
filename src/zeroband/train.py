@@ -238,7 +238,7 @@ def train(config: Config):
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers(
-            elastic_device_mesh.live_recovery.get_address(world_info.global_rank - 1)
+            elastic_device_mesh.live_recovery.get_address(0)  # always pick zero
         )
         elastic_device_mesh.live_recovery.need_live_recovery = False
         diloco.fake_step(model)

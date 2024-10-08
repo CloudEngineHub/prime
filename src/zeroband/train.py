@@ -242,6 +242,10 @@ def train(config: Config):
         )
         elastic_device_mesh.live_recovery.need_live_recovery = False
         training_progress.step += config.diloco.inner_steps
+
+        if config.train.log_model_hash:
+            logger.debug("Pre diloco model: %s", get_module_signature(model))
+
         diloco.fake_step(model)
         training_progress.outer_step += 1
 

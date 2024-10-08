@@ -241,7 +241,9 @@ def train(config: Config):
             elastic_device_mesh.live_recovery.get_address(0)  # always pick zero
         )
         elastic_device_mesh.live_recovery.need_live_recovery = False
+        training_progress.step += config.diloco.inner_steps
         diloco.fake_step(model)
+        training_progress.outer_step += 1
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor

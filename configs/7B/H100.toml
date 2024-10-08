@@ -1,5 +1,6 @@
 name_model = "7B"
 project = "debug_7B_zero_band"
+type_model = "llama2"
 
 [train]
 micro_bs = 1

@@ -2,7 +2,7 @@ name_model = "10B"
 project = "debug_10B_zero_band"
 
 [train]
-micro_bs = 2
+micro_bs = 1
 ac_ckpt = true
 
 [optim]

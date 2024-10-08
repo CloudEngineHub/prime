@@ -56,7 +56,7 @@ class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
     ac_ckpt: bool | int = False
-    reshard_after_forward: bool = False  # old shard grad op False mean full shard
+    reshard_after_forward: bool = True  # old shard grad op True mean full shard
 
     reduce_fp32: bool = False  # should be True if SXM. Keep to false as default for backward compatibility
 
@@ -89,7 +89,7 @@ class CkptConfig(BaseConfig):
 class Config(BaseConfig):
     # main config
     name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "10B", "13B", "26B", "70B"] = "150M"
-    type_model: Literal["llama2", "llama3"] = "llama2"
+    type_model: Literal["llama2", "llama3"] = "llama3"
 
     project: str = "zeroband"
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
@@ -125,8 +125,18 @@ def train(config: Config):
     assert batch_size % config.train.micro_bs == 0
     gradient_accumulation_steps = batch_size // config.train.micro_bs
 
-    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
-    tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
+    if config.ckpt is not None and config.ckpt.interval is not None and config.diloco is not None:
+        assert (
+            config.ckpt.interval % config.diloco.inner_steps == 0
+        ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
+
+    if config.type_model == "llama2":
+        tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
+        tokenizer.pad_token = "</s>"
+    elif config.type_model == "llama3":
+        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B", use_fast=True)
+    else:
+        raise ValueError(f"Model type {config.type_model} not supported")
 
     logger.debug("tokenizer loaded")
 
@@ -135,15 +145,14 @@ def train(config: Config):
         world_size=world_info.world_size,
         rank=world_info.rank,
         batch_size=config.train.micro_bs,
+        pad_token_id=0 if config.type_model == "llama3" else tokenizer.pad_token_id,
         data_config=config.data,
     )
 
     model, model_config = get_model(
         config.name_model,
         config.type_model,
-        vocab_size=tokenizer.vocab_size
-        if config.name_model != "debugmodel" or not config.data.fake
-        else TEST_VOCAB_SIZE,
+        vocab_size=len(tokenizer) if config.name_model != "debugmodel" or not config.data.fake else TEST_VOCAB_SIZE,
         seq_length=config.data.seq_length,
     )
 
@@ -302,7 +311,11 @@ def train(config: Config):
                 flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
                 loss = (
-                    F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
+                    F.cross_entropy(
+                        flatten_logits,
+                        flatten_labels,
+                        ignore_index=0 if config.type_model == "llama3" else tokenizer.pad_token_id,
+                    )
                     / gradient_accumulation_steps
                 )
                 loss.backward()

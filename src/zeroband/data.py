@@ -80,7 +80,9 @@ def _collate_fn_causal_mask(
     return {"input_ids": torch.stack(batched["input_ids"], dim=0), "labels": torch.stack(batched["labels"], dim=0)}
 
 
-def get_dataloader(tokenizer, world_size: int, rank: int, batch_size: int, data_config: DataConfig) -> DataLoader:
+def get_dataloader(
+    tokenizer, world_size: int, rank: int, batch_size: int, data_config: DataConfig, pad_token_id: int
+) -> DataLoader:
     if data_config.fake:
         train_dataset = FakeTokenizedDataset(data_config.seq_length, TEST_VOCAB_SIZE)
     else:
@@ -93,9 +95,7 @@ def get_dataloader(tokenizer, world_size: int, rank: int, batch_size: int, data_
         tokenized_datasets = ds.map(tokenize_function, batched=True, remove_columns=["text", "attention_mask"])
         train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
-    data_collator = collate_causal_mask(
-        max_seq_length=data_config.seq_length, pad_id=tokenizer.pad_token_id, ignore_index=-100
-    )
+    data_collator = collate_causal_mask(max_seq_length=data_config.seq_length, pad_id=pad_token_id, ignore_index=-100)
 
     return StatefulDataLoader(
         train_dataset,

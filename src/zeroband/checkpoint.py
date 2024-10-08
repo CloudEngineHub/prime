@@ -334,11 +334,11 @@ class CkptManager:
         for param_offloaded, param in zip(self.diloco_offloaded_param_list, self.model.parameters()):
             param_offloaded.data.to_local().copy_(param.data.to_local())
 
-        if not skip_dataloader:
-            ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
-            with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
-                rank_state_dict = torch.load(f)
+        ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
+        with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
+            rank_state_dict = torch.load(f)
 
+        if not skip_dataloader:
             self.dataloader.load_state_dict(rank_state_dict["data_loader"])
 
         if self.diloco_offloaded_optimizer:

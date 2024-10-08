@@ -19,7 +19,13 @@ from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 
-from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature
+from zeroband.utils import (
+    GPUMemoryMonitor,
+    PerfCounter,
+    get_module_signature,
+    get_tensor_list_signature,
+    extract_momentum_tensors,
+)
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
@@ -212,6 +218,10 @@ def train(config: Config):
     if config.resume is not None:
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
+        if config.train.log_model_hash:
+            logger.info(
+                f"optimizer hash: {get_tensor_list_signature(extract_momentum_tensors(diloco.outer_optimizer))}"
+            )
 
     model.train()
 
@@ -230,6 +240,11 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
+
+    # diloco.outer_optimizer.step()
+
+    # logger.info(diloco.outer_optimizer.state_dict()["state"])
+
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -323,6 +338,11 @@ def train(config: Config):
 
             if config.train.log_model_hash:
                 logger.debug("Post diloco model: %s", get_module_signature(model))
+
+            if config.train.log_model_hash:
+                logger.info(
+                    f"optimizer hash: {get_tensor_list_signature(extract_momentum_tensors(diloco.outer_optimizer))}"
+                )
 
         training_progress.outer_step += 1
 

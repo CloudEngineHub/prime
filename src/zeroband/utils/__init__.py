@@ -131,6 +131,21 @@ def get_module_signature(module: torch.nn.Module, compress: bool = True) -> str:
         return "\n".join(f"{name}: {sig}" for name, sig in state_dict_sig.items())
 
 
+def get_tensor_list_signature(tensor_list: list[torch.Tensor]) -> str:
+    return hashlib.md5(str(tensor_list).encode("utf-8")).hexdigest()
+
+
+def extract_momentum_tensors(optimizer) -> list[torch.Tensor]:
+    # only work for sgd nesterov
+    momentum_tensors = []
+    state_dict = optimizer.state_dict()
+
+    for param_state in state_dict["state"].values():
+        if "momentum_buffer" in param_state:
+            momentum_tensors.append(param_state["momentum_buffer"])
+    return momentum_tensors
+
+
 class GPUMemoryMonitor:
     # inspired from https://github.com/pytorch/torchtitan/blob/eef8bb2b1b6f0875ab0581079e1511d51654910e/torchtitan/metrics.py#L32
     def __init__(self, device: str = "cuda"):

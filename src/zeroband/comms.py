@@ -412,7 +412,7 @@ class LiveRecovery:
         self.store = dist.PrefixStore("live_reco_address", store)
 
         self._logger.debug(f"Live recovery address: {LIVE_RECO_ADDR}:{self.port}")
-        self.store.set(f"address_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{self.port}")
+        self.store.set(f"address_{self.world_info.global_rank}", f"{LIVE_RECO_ADDR}:{self.port}")
 
     def get_address(self, rank: int) -> str:
         """Get the live recovery address for a given rank."""

@@ -367,11 +367,12 @@ class CkptManager:
                 source=f"http://{address}/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
+            self._logger.info(
+                f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
+            )
         dist.barrier()
         self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
-        self._logger.info(
-            f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
-        )
+
         # we don't want the dataloader states to be loaded as they are not the same on each rank
 
 

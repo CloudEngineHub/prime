@@ -141,22 +141,15 @@ class Diloco:
 
         return offloaded_params
 
-    def step(self, model: nn.Module):
+    def step(self, model: nn.Module, fake: bool = False):
         """
         Step the optimizer
         """
         time_start = time.perf_counter()
-        self.sync_pseudo_gradient(model)
+        self.sync_pseudo_gradient(model, fake=fake)
         self._logger.info(f"all reduce pseudo gradient in: {time.perf_counter() - time_start} seconds")
 
         if self.outer_optimizer is not None:
             self.outer_optimizer.step()
 
         self.sync_inner_model(model)
-
-    def fake_step(self, model: nn.Module):
-        """
-        Fake step the optimizer
-        """
-        self.sync_pseudo_gradient(model, fake=True)
-        self._logger.info("all reduce pseudo gradient with zeros tensor")

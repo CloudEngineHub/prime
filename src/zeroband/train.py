@@ -246,7 +246,7 @@ def train(config: Config):
         if config.train.log_model_hash:
             logger.debug("Pre diloco model: %s", get_module_signature(model))
 
-        diloco.fake_step(model)
+        diloco.step(model, fake=True)
         training_progress.outer_step += 1
 
     if world_info.rank == 0:

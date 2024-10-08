@@ -361,17 +361,17 @@ class ElasticDeviceMesh:
 """
 How is live recovery working:
 
-Each diloco rank will expose a htttp server on a given port. For now the port is hardcoded. Each rank then annouces its adress on the store
-For now the adress is always using localhost.
+Each diloco rank will expose a htttp server on a given port. For now the port is hardcoded. Each rank then annouces its address on the store
+For now the address is always using localhost.
 
 When a new node join, the EDM will assigned "need_live_recovery" to true. Which will lead to the new nodes
 dowlading the latest checkpoint from the other nodes. Right now the src node is always global_world_size - 1 nodes.
 
 
-At the checkpoint level, each rank will save to shm after each outer step. When calling normal ckpt it will copy paste from shm to the real ckpt adress
+At the checkpoint level, each rank will save to shm after each outer step. When calling normal ckpt it will copy paste from shm to the real ckpt address
 in a sync way, if there is a remote_dest it will chained, shm to disk then disk to remote copy, both copy are done sequential but don't block the training (async ckpt).
 
-The live recovery ckpt exposes the shm checkpoint adress. For now there can be race condition if there is a new ckpt while a new joiner download.
+The live recovery ckpt exposes the shm checkpoint address. For now there can be race condition if there is a new ckpt while a new joiner download.
 
 
 todo
@@ -402,15 +402,15 @@ class LiveRecovery:
 
     def init_live_endpoint(self, store: dist.Store):
         """
-        Put its own adress to the store so that other nodes can connect to it for live recovery
+        Put its own address to the store so that other nodes can connect to it for live recovery
         """
         if not self.enable:
             return
-        self.store = dist.PrefixStore("live_reco_adress", store)
+        self.store = dist.PrefixStore("live_reco_address", store)
 
-        self._logger.debug(f"Live recovery adress: {LIVE_RECO_ADDR}:{self.port}")
-        self.store.set(f"adress_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{self.port}")
+        self._logger.debug(f"Live recovery address: {LIVE_RECO_ADDR}:{self.port}")
+        self.store.set(f"address_{self.world_info.global_unique_id}", f"{LIVE_RECO_ADDR}:{self.port}")
 
-    def get_adress(self, rank: int) -> str:
-        """Get the live recovery adress for a given rank."""
-        return self.store.get(f"adress_{rank}").decode("utf-8")
+    def get_address(self, rank: int) -> str:
+        """Get the live recovery address for a given rank."""
+        return self.store.get(f"address_{rank}").decode("utf-8")

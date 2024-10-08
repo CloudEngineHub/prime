@@ -288,7 +288,7 @@ class CkptManager:
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def download_and_load_ckpt_from_peers(self, adress: str):
+    def download_and_load_ckpt_from_peers(self, address: str):
         time_start = time.perf_counter()
         ckpt_path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
         path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
@@ -299,19 +299,19 @@ class CkptManager:
 
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
-            self._logger.info(f"Started downloading ckpt from http://{adress}/diloco_{dest_rank}")
+            self._logger.info(f"Started downloading ckpt from http://{address}/diloco_{dest_rank}")
             wget(
-                source=f"http://{adress}/diloco_{dest_rank}",
+                source=f"http://{address}/diloco_{dest_rank}",
                 destination=path,
             )
             wget(
-                source=f"http://{adress}/diloco_{dest_rank}/.metadata",
+                source=f"http://{address}/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
         dist.barrier()
         self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
         self._logger.info(
-            f"Downloaded checkpoint from http://{adress}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
+            f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
         )
         # we don't want the dataloader states to be loaded as they are not the same on each rank
 

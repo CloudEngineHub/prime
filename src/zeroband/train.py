@@ -23,8 +23,7 @@ from zeroband.utils import (
     GPUMemoryMonitor,
     PerfCounter,
     get_module_signature,
-    get_tensor_list_signature,
-    extract_momentum_tensors,
+    get_optimizer_signature,
 )
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
@@ -219,9 +218,7 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.resume)
         if config.train.log_model_hash:
-            logger.info(
-                f"optimizer hash: {get_tensor_list_signature(extract_momentum_tensors(diloco.outer_optimizer))}"
-            )
+            logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
     model.train()
 
@@ -240,10 +237,6 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
-
-    # diloco.outer_optimizer.step()
-
-    # logger.info(diloco.outer_optimizer.state_dict()["state"])
 
     while True:
         if num_inner_steps > 1:
@@ -340,9 +333,7 @@ def train(config: Config):
                 logger.debug("Post diloco model: %s", get_module_signature(model))
 
             if config.train.log_model_hash:
-                logger.info(
-                    f"optimizer hash: {get_tensor_list_signature(extract_momentum_tensors(diloco.outer_optimizer))}"
-                )
+                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
         training_progress.outer_step += 1
 

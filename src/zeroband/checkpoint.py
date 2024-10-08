@@ -112,12 +112,16 @@ class OuterOptimizerWrapper(Stateful):
         self.optimizer = optimizer
 
     def state_dict(self) -> dict[str, Any]:
+        # the idea here is to cast any DTensor into local tensor
         state = self.optimizer.state_dict()
         return cast_dtensor_to_tensor(state)
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        # we pre-init the opt buffer DTensor.
+        # !! this assume that the model have grad buffer init
         self.optimizer.step()  # pre init buffer
 
+        ## here the idea is for any DTensor, load the value from the state_dict into the local tensor
         current_state = self.optimizer.state_dict()
         load_dtensor_state_dict(current_state, state_dict)
         self.optimizer.load_state_dict(state_dict)

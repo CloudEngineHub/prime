@@ -3,7 +3,7 @@
 #include <torch/csrc/distributed/c10d/ProcessGroupGloo.hpp>
 #include <compression.cpp>
 
-constexpr int BUFFER_COUNT = 4;
+constexpr int BUFFER_COUNT = 2;
 
 template <typename T>
 void fast_index_add_omp(T* output, const T* lookup_table, const uint8_t* indices, int64_t n) {

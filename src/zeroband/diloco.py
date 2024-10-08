@@ -85,7 +85,7 @@ class Diloco:
             for i in range(self.config.retry_all_reduce):
                 try:
                     if fake:
-                        grad = torch.zeros_like(param_offloaded.data)
+                        grad = torch.zeros_like(param_offloaded.data.to_local())
                     else:
                         grad = param_offloaded.data.to_local() - param.data.to_local().to(param_offloaded.data.device)
 

@@ -1,3 +1,4 @@
+from typing import Optional
 import logging
 import os
 
@@ -24,13 +25,19 @@ class CustomFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-def get_logger():
+def get_logger(name: Optional[str] = None) -> logging.Logger:
     global logger  # Add this line to modify the global logger variable
     if logger is not None:
         return logger
 
-    world_info = get_world_info()
-    logger = logging.getLogger(__name__)
+    try:
+        world_info = get_world_info()
+    except KeyError:
+        from zeroband.utils.world_info import WorldInfo
+
+        world_info = WorldInfo.__new__(WorldInfo)
+        world_info.local_rank = 0
+    logger = logging.getLogger(name or __name__)
 
     log_level = os.getenv("ZERO_BAND_LOG_LEVEL", "INFO")
 

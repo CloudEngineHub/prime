@@ -27,18 +27,12 @@ from zeroband.utils import (
 )
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.utils.monitor import WandbMonitor, DummyMonitor
-from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
+from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
 from zeroband.models.llama import get_model
 from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from zeroband.checkpoint import CkptManager, TrainingProgress
-
-
-class DataConfig(BaseConfig):
-    seq_length: int = 1024
-    fake: bool = False
-    num_workers: int = 4
 
 
 class OptimConfig(BaseConfig):
@@ -116,12 +110,10 @@ def train(config: Config):
 
     train_dataloader = get_dataloader(
         tokenizer=tokenizer,
-        world_size=world_info.world_size * world_info.global_world_size,
-        rank=world_info.rank + world_info.global_rank * world_info.global_world_size,
-        seq_length=config.data.seq_length,
+        world_size=world_info.world_size,
+        rank=world_info.rank,
         batch_size=config.train.micro_bs,
-        num_workers=config.data.num_workers,
-        fake_data=config.data.fake,
+        data_config=config.data,
     )
 
     model, model_config = get_model(
@@ -224,7 +216,11 @@ def train(config: Config):
 
     if world_info.rank == 0:
         logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
-        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
+        metric_logger = logger_cls(
+            project=config.project,
+            config={"config": config.model_dump(), "world_info": world_info.json()},
+            resume=False,
+        )
 
     if config.train.memory_monitor:
         gpu_mem_monitor = GPUMemoryMonitor()

@@ -31,6 +31,20 @@ class WorldInfo:
     def diloco_rank(self):
         return self.global_rank
 
+    def json(self) -> dict[str, int | str]:
+        return {
+            "world_size": self.world_size,
+            "rank": self.rank,
+            "local_rank": self.local_rank,
+            "local_world_size": self.local_world_size,
+            "nnodes": self.nnodes,
+            "global_unique_id": self.global_unique_id,
+            "global_addr": self.global_addr,
+            "global_port": self.global_port,
+            "global_world_size": self.global_world_size,
+            "global_rank": self.global_rank,
+        }
+
 
 def get_world_info() -> WorldInfo:
     """

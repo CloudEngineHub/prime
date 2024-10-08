@@ -361,35 +361,13 @@ class ElasticDeviceMesh:
         return self.global_pg
 
 
-"""
-How is live recovery working:
-
-Each diloco rank will expose a htttp server on a given port. For now the port is hardcoded. Each rank then annouces its address on the store
-For now the address is always using localhost.
-
-When a new node join, the EDM will assigned "need_live_recovery" to true. Which will lead to the new nodes
-dowlading the latest checkpoint from the other nodes. Right now the src node is always global_world_size - 1 nodes.
-
-
-At the checkpoint level, each rank will save to shm after each outer step. When calling normal ckpt it will copy paste from shm to the real ckpt address
-in a sync way, if there is a remote_dest it will chained, shm to disk then disk to remote copy, both copy are done sequential but don't block the training (async ckpt).
-
-The live recovery ckpt exposes the shm checkpoint address. For now there can be race condition if there is a new ckpt while a new joiner download.
-
-
-todo
-
-[ ] configurable port
-[ ] enable private ip broadcast via the vpn
-[ ] choose nodes to download to via bandwith
-[ ] avoid race condition when downloading while having another ckot
-[ ] If a node join but failed to donwload it will kill the whole training. Need to be fix
-
-
-"""
-
-
 class LiveRecovery:
+    """
+    Each Node expose an http server saving the lastest ckpt.
+    Each adress serving a ckpt is save in the store.
+    When a new node is joinings it retrieve the adress fron the store and downloading the latest ckpk.
+    """
+
     def __init__(self, enable: bool):
         self.need_live_recovery = False
         self.store: dist.Store | None = None

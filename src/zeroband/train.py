@@ -247,6 +247,8 @@ def train(config: Config):
             logger.debug("Pre diloco model: %s", get_module_signature(model))
 
         diloco.step(model, fake=True)
+        # do we even need to do a fake step here ? Since the inner model and outer model are the same
+        # the tensor should automatically be zero
         training_progress.outer_step += 1
 
     if world_info.rank == 0:

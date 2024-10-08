@@ -212,7 +212,7 @@ class CkptManager:
         time_start = time.perf_counter()
         ckpt_path = self.shm_path
         self._save(ckpt_path)
-        if self.live_server.is_running:
+        if not self.live_server.is_running:
             self.live_server.start_server()
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
@@ -388,6 +388,7 @@ class CkptLiveServer:
     def start_server(self):
         self._process = multiprocessing.Process(target=self._start_http_server, daemon=True)
         self._process.start()
+        self._logger.info(f"Start process serving live ckpt on {self.port}")
 
     def _start_http_server(self):
         import http.server

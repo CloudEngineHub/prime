@@ -286,9 +286,9 @@ def train(config: Config):
     if config.train.memory_profiler is not None:
         memory_profiler = MemoryProfiler(config.train.memory_profiler.freq, config.train.memory_profiler.snapshot_dir)
 
-        if config.monitor is not None:
-            monitor = HttpMonitor(config=config.model_dump(), resume=False)
-            monitor.set_stage("init")
+    if config.monitor is not None:
+        monitor = HttpMonitor(config=config.model_dump(), resume=False)
+        monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 

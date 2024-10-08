@@ -212,6 +212,8 @@ class CkptManager:
         time_start = time.perf_counter()
         ckpt_path = self.shm_path
         self._save(ckpt_path)
+        if self.live_server.is_running:
+            self.live_server.start_server()
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
     def save(self, ckpt_path: str, remote_ckpt_path: str | None, already_in_shm: bool = False) -> None:
@@ -381,7 +383,9 @@ class CkptLiveServer:
         self.port = port
         self.ckpt_path = ckpt_path
         self._logger = get_logger()
+        self._process = None
 
+    def start_server(self):
         self._process = multiprocessing.Process(target=self._start_http_server, daemon=True)
         self._process.start()
 
@@ -396,7 +400,12 @@ class CkptLiveServer:
             httpd.serve_forever()
 
     def stop(self):
-        self._process.terminate()
+        if self._process is not None:
+            self._process.terminate()
 
     def __del__(self):
         self.stop()
+
+    @property
+    def is_running(self) -> bool:
+        return self._process is not None and self._process.is_alive()

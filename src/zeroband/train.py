@@ -31,7 +31,6 @@ from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
 from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
 from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
 from zeroband.utils.monitor import HttpMonitor
-from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
 from zeroband.models.llama import get_model
 from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info

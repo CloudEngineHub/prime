@@ -349,12 +349,12 @@ class CkptManager:
 
     def download_and_load_ckpt_from_peers(self, address: str):
         time_start = time.perf_counter()
-        ckpt_path = f"/tmp/zeroband/node_{self.world_info.global_rank}"
+        ckpt_path = f"/shm/zeroband_reco/node_{self.world_info.global_rank}"
         path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
         if os.path.exists(path):
             shutil.rmtree(path)
         os.makedirs(path, exist_ok=True)
-        dest_rank = self.world_info.global_rank - 1
+        dest_rank = 0
 
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt

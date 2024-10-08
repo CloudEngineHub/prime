@@ -211,6 +211,11 @@ class CkptManager:
         """
         time_start = time.perf_counter()
         ckpt_path = self.shm_path
+        if self.world_info.local_rank == 0:
+            shutil.rmtree(ckpt_path, ignore_errors=True)
+
+        dist.barrier()
+
         self._save(ckpt_path)
         if not self.live_server.is_running:
             self.live_server.start_server()

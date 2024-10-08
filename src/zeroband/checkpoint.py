@@ -353,13 +353,15 @@ class CkptManager:
         time_start = time.perf_counter()
         ckpt_path = f"/dev/shm/zeroband_reco/node_{self.world_info.global_rank}"
         path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
-        if os.path.exists(path):
-            shutil.rmtree(path)
-        os.makedirs(path, exist_ok=True)
-        dest_rank = 0
 
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            os.makedirs(path, exist_ok=True)
+
+            dest_rank = 0
+
             self._logger.info(f"Started downloading ckpt from http://{address}/diloco_{dest_rank}")
             wget(
                 source=f"http://{address}/diloco_{dest_rank}",
@@ -372,6 +374,7 @@ class CkptManager:
             self._logger.info(
                 f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
             )
+
         dist.barrier()
         self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
 

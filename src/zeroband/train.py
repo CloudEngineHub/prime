@@ -115,8 +115,8 @@ def train(config: Config):
 
     train_dataloader = get_dataloader(
         tokenizer=tokenizer,
-        world_size=world_info.world_size,
-        rank=world_info.rank,
+        world_size=world_info.world_size * world_info.global_world_size,
+        rank=world_info.rank + world_info.global_rank * world_info.global_world_size,
         batch_size=config.train.micro_bs,
         pad_token_id=0 if config.type_model == "llama3" else tokenizer.pad_token_id,
         data_config=config.data,

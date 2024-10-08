@@ -376,7 +376,7 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path, shm_save=config.ckpt.live_recovery)
+            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path, already_in_shm=config.ckpt.live_recovery)
 
         if config.diloco:
             tokens_per_second = (

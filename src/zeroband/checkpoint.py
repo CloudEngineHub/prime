@@ -214,7 +214,7 @@ class CkptManager:
         self._save(ckpt_path)
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def save(self, ckpt_path: str, remote_ckpt_path: str | None, shm_save: bool = False) -> None:
+    def save(self, ckpt_path: str, remote_ckpt_path: str | None, already_in_shm: bool = False) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -229,7 +229,7 @@ class CkptManager:
 
         step_ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
 
-        if not shm_save:
+        if not already_in_shm:
             self._save(ckpt_path)
             if remote_ckpt_path is not None:
                 self._async_save_remote(step_ckpt_path, remote_ckpt_path)

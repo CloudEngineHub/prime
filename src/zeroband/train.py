@@ -28,7 +28,6 @@ from zeroband.utils import (
 )
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
-from zeroband.utils import PerfCounter, get_model_hash, get_sharding_strategy
 from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
 from zeroband.utils.monitor import HttpMonitor
 from zeroband.models.llama import get_model

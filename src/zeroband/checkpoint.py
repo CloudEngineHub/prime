@@ -349,7 +349,7 @@ class CkptManager:
 
     def download_and_load_ckpt_from_peers(self, address: str):
         time_start = time.perf_counter()
-        ckpt_path = f"/shm/zeroband_reco/node_{self.world_info.global_rank}"
+        ckpt_path = f"/dev/shm/zeroband_reco/node_{self.world_info.global_rank}"
         path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
         if os.path.exists(path):
             shutil.rmtree(path)

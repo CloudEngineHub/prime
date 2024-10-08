@@ -99,7 +99,7 @@ class Config(BaseConfig):
     @model_validator(mode="after")
     def live_reco_very_check(self):
         if self.ckpt.live_recovery and self.diloco is None:
-            raise ValueError("Diloco must be set to use live recovery")
+            raise ValueError("Live recovery is a diloco feature. Diloco must be set if live recovery is set")
         return self
 
     @model_validator(mode="after")

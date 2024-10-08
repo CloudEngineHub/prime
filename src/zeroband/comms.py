@@ -165,7 +165,7 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
             self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
             prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
-            self.live_recovery.need_live_recovery = True if self.live_recovery.enable else False
+            self.live_recovery.need_live_recovery = self.live_recovery.enable
         else:
             # TODO: Could be in "reinit" status. We probably just recurse until running in this case
             raise RuntimeError(f"Unknown status {self.global_status}")
@@ -387,7 +387,7 @@ todo
 
 
 class LiveRecovery:
-    def __init__(self, enable):
+    def __init__(self, enable: bool):
         self.need_live_recovery = False
         self.store: dist.Store | None = None
         self.world_info = get_world_info()

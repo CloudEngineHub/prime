@@ -414,6 +414,6 @@ class LiveRecovery:
         self._logger.debug(f"Live recovery address: {LIVE_RECO_ADDR}:{self.port}")
         self.store.set(f"address_{self.world_info.global_rank}", f"{LIVE_RECO_ADDR}:{self.port}")
 
-    def get_address(self, rank: int) -> str:
+    def get_address(self, global_rank: int) -> str:
         """Get the live recovery address for a given rank."""
-        return self.store.get(f"address_{rank}").decode("utf-8")
+        return self.store.get(f"address_{global_rank}").decode("utf-8")

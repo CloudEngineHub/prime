@@ -75,6 +75,8 @@ class CkptConfig(BaseConfig):
 
     live_recovery: bool = False
 
+    live_recovery_rank_src: int = 0
+
     resume: str | None = None
 
     @model_validator(mode="after")
@@ -258,7 +260,7 @@ def train(config: Config):
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers(
-            elastic_device_mesh.live_recovery.get_address(0)  # always pick zero
+            elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
         )
         elastic_device_mesh.live_recovery.need_live_recovery = False
         training_progress.step += config.diloco.inner_steps

@@ -89,7 +89,7 @@ class Diloco:
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / global_pg.size()
-            numels += param.grad.numel()
+            numels += param_offloaded.grad.numel()
             time_start = time.perf_counter()
             all_reduce(self.config.compression, param_offloaded.grad, dist.ReduceOp.SUM, global_pg)
             times.append(time.perf_counter() - time_start)

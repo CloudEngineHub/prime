@@ -186,7 +186,7 @@ class CkptManager:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
             shutil.rmtree(self.shm_path, ignore_errors=True)
             os.makedirs(self.shm_path, exist_ok=True)
-            
+
             serve_path = os.path.join(SHM_PATH, self.world_info.global_unique_id)
             self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=serve_path)
         else:
@@ -238,16 +238,17 @@ class CkptManager:
 
         step_ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
 
+        if remote_ckpt_path is not None:
+            remote_ckpt_path = os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
+
         if not already_in_shm:
-            self._save(ckpt_path)
+            self._save(step_ckpt_path)
             if remote_ckpt_path is not None:
                 self._async_save_remote(step_ckpt_path, remote_ckpt_path)
             self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         else:
-            self._async_save_remote(
-                self.shm_path, step_ckpt_path, os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
-            )
+            self._async_save_remote(self.shm_path, step_ckpt_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
         if self.diloco_offloaded_optimizer:

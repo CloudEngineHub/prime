@@ -100,7 +100,7 @@ class Diloco:
                 _collective_start_time = time.time()
                 for tensor_group in self._offloaded_grad_grouped_tensor:
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
-                self._logger.info(
+                self._logger.debug(
                     f"All reduce takes {time.time() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
                 )
                 break

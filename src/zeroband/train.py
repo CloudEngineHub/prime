@@ -355,16 +355,19 @@ def train(config: Config):
                     ce_loss, z_loss = cross_entropy_max_z_loss(
                         flatten_logits, flatten_labels, config.optim.z_loss_weight
                     )
+
+                    ce_loss /= gradient_accumulation_steps
+                    z_loss /= gradient_accumulation_steps
+
                     loss_batch += ce_loss.detach()
                     z_loss_batch += z_loss.detach()
 
                     loss = ce_loss + z_loss
 
                 else:
-                    loss = F.cross_entropy(flatten_logits, flatten_labels)
+                    loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
                     loss_batch += loss.detach()
 
-                loss /= gradient_accumulation_steps
                 loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

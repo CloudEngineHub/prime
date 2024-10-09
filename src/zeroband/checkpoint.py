@@ -223,7 +223,12 @@ class CkptManager:
             self.live_server.start_server()
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def save(self, ckpt_path: str, remote_ckpt_path: str | None, already_in_shm: bool = False) -> None:
+    def get_checkpoints_to_delete(ckpt_path: str, topk: int) -> list[str]:
+        checkpoints = [d for d in os.listdir(ckpt_path) if d.startswith("step_")]
+        sorted_checkpoints = sorted(checkpoints, key=lambda x: int(x.split("_")[1]), reverse=True)
+        return [os.path.join(ckpt_path, d) for d in sorted_checkpoints[topk:]]
+
+    def save(self, ckpt_path: str, remote_ckpt_path: str | None, already_in_shm: bool = False, topk=int | None) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -243,12 +248,22 @@ class CkptManager:
 
         if not already_in_shm:
             self._save(step_ckpt_path)
-            if remote_ckpt_path is not None:
-                self._async_save_remote(step_ckpt_path, remote_ckpt_path)
+
+            if self.world_info.local_rank == 0:
+                if remote_ckpt_path is not None:
+                    self._async_save_remote(step_ckpt_path, remote_ckpt_path)
+
+                if topk is not None:
+                    path_to_delete = get_checkpoints_to_delete(ckpt_path, topk)
+                    for path in path_to_delete:
+                        shutil.rmtree(path, ignore_errors=True)
+
             self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         else:
-            self._async_save_remote(self.shm_path, step_ckpt_path, remote_ckpt_path)
+            if self.world_info.local_rank == 0:
+                if remote_ckpt_path is not None:
+                    self._async_save_remote(self.shm_path, step_ckpt_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
         if self.diloco_offloaded_optimizer:
@@ -421,3 +436,9 @@ class CkptLiveServer:
     @property
     def is_running(self) -> bool:
         return self._process is not None and self._process.is_alive()
+
+
+def get_checkpoints_to_delete(ckpt_path: str, topk: int) -> list[str]:
+    checkpoints = [d for d in os.listdir(ckpt_path) if d.startswith("step_")]
+    sorted_checkpoints = sorted(checkpoints, key=lambda x: int(x.split("_")[1]), reverse=True)
+    return [os.path.join(ckpt_path, d) for d in sorted_checkpoints[topk:]]

@@ -234,8 +234,6 @@ class CkptManager:
         shm_save=True mean we previsouly saved to shm so we just do a copy past to disk
         """
 
-        time_start = time.perf_counter()
-
         step_ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
 
         if remote_ckpt_path is not None:
@@ -243,15 +241,13 @@ class CkptManager:
 
         if not already_in_shm:
             self._save(step_ckpt_path)
-
             if self.world_info.local_rank == 0:
-                if remote_ckpt_path is not None:
-                    self._async_save_remote(step_ckpt_path, remote_ckpt_path)
-                self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
+                self._async_save_remote(step_ckpt_path, remote_ckpt_path)
 
         else:
             if self.world_info.local_rank == 0:
-                self._async_save_remote(self.shm_path, step_ckpt_path, remote_ckpt_path)
+                self._async_save_remote(self.shm_path, step_ckpt_path)
+                self._async_save_remote(self.shm_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
         if self.diloco_offloaded_optimizer:
@@ -281,24 +277,21 @@ class CkptManager:
 
         gc.collect()
 
-    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str, second_remote_path: str | None = None):
+    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str):
         """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
         specific libraries (e.g. s3fs).
-
-        If second_remote_path is provided, it will rsync the remote_ckpt_path to the second_remote_path after the first. sync
-        Usefull for sh to disk to remote save operation.
         """
 
-        def _rsync(src_path: str, dest_path: str):
-            time_start = time.perf_counter()
-            self._logger.info(f"start pushing {src_path} to {dest_path} asynchronously")
-            rsync_fsspec(src_path, destination=dest_path)
-            self._logger.info(f"finish pushing {src_path} to {dest_path} in {time.perf_counter() - time_start} seconds")
-
         def rsync():
-            _rsync(ckpt_path, remote_ckpt_path)
-            if second_remote_path:
-                _rsync(remote_ckpt_path, second_remote_path)
+            time_start = time.perf_counter()
+            self._logger.info(f"start pushing {ckpt_path} to {remote_ckpt_path} asynchronously")
+            try:
+                rsync_fsspec(ckpt_path, destination=remote_ckpt_path)
+            except Exception as e:
+                self._logger.error(f"Error pushing {ckpt_path} to {remote_ckpt_path}: {e}")
+            self._logger.info(
+                f"finish pushing {ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
+            )
 
         processes = multiprocessing.Process(target=rsync, daemon=True)
         processes.start()

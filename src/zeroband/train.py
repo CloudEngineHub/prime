@@ -6,6 +6,7 @@ from pydantic import model_validator
 import torch
 from pydantic_config import parse_argv, BaseConfig
 from einops import rearrange
+from torch.nn import functional as F
 
 from transformers import AutoTokenizer
 
@@ -47,7 +48,7 @@ class OptimConfig(BaseConfig):
     total_steps: int = 88_000
     batch_size: int = 512
 
-    z_loss: bool = True
+    z_loss: bool = False
     z_loss_weight: float = 2e-4
 
 
@@ -350,15 +351,24 @@ def train(config: Config):
                 flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
                 flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                ce_loss, z_loss = cross_entropy_max_z_loss(flatten_logits, flatten_labels, config.optim.z_loss_weight)
+                if config.optim.z_loss is not None:
+                    ce_loss, z_loss = cross_entropy_max_z_loss(
+                        flatten_logits, flatten_labels, config.optim.z_loss_weight
+                    )
 
-                ce_loss /= gradient_accumulation_steps
-                z_loss /= gradient_accumulation_steps
-                loss = ce_loss + z_loss
+                    ce_loss /= gradient_accumulation_steps
+                    z_loss /= gradient_accumulation_steps
+
+                    loss_batch += ce_loss.detach()
+                    z_loss_batch += z_loss.detach()
+
+                    loss = ce_loss + z_loss
+
+                else:
+                    loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
+                    loss_batch += loss.detach()
+
                 loss.backward()
-
-                loss_batch += ce_loss.detach()
-                z_loss_batch += z_loss.detach()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()
@@ -369,10 +379,9 @@ def train(config: Config):
             training_progress.step += 1
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
-            logger.debug(f"loss_batch: {loss_batch}, z_loss_batch: {z_loss_batch}")
-
             dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
-            dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # if config.optim.z_loss:
+            #     dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
 
             # syncing loss across all data parallel rank within a nodes
 

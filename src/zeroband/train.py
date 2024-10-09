@@ -8,10 +8,7 @@ from pydantic_config import parse_argv, BaseConfig
 from einops import rearrange
 from torch.nn import functional as F
 
-from transformers import (
-    AutoTokenizer,
-    get_cosine_schedule_with_warmup,
-)
+from transformers import AutoTokenizer
 
 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
@@ -34,6 +31,7 @@ from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from zeroband.checkpoint import CkptManager, TrainingProgress
+from zeroband.lr_scheduler import get_scheduler
 
 
 class OptimConfig(BaseConfig):
@@ -42,7 +40,9 @@ class OptimConfig(BaseConfig):
     adam_betas1: float = 0.9
     adam_betas2: float = 0.95
 
+    sched_type: Literal["cosine", "linear", "wsd-sqrt"] = "cosine"
     warmup_steps: int = 1000
+    stable_steps: int = 80_000
     total_steps: int = 88_000
     batch_size: int = 512
 
@@ -214,8 +214,9 @@ def train(config: Config):
     if config.diloco is not None:
         diloco = Diloco(config.diloco, model, elastic_device_mesh)
 
-    scheduler = get_cosine_schedule_with_warmup(
-        inner_optimizer,
+    scheduler = get_scheduler(
+        sched_type=config.optim.sched_type,
+        optimizer=inner_optimizer,
         num_warmup_steps=config.optim.warmup_steps,
         num_training_steps=config.optim.total_steps,
     )

@@ -1,6 +1,8 @@
 from torch.optim.lr_scheduler import LambdaLR
 from functools import partial
 import math
+from transformers.optimization import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
+
 
 def _get_linear_schedule_with_wsd_sqrt_lr_lambda(current_step: int, *, num_warmup_steps: int, num_stable_steps: int, num_training_steps: int):
     if current_step < num_warmup_steps:
@@ -36,3 +38,12 @@ def get_linear_schedule_with_wsd_sqrt(optimizer, num_warmup_steps: int, num_stab
         num_training_steps=num_training_steps,
     )
     return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+SCHED_MAP = {
+    "cosine": get_cosine_schedule_with_warmup,
+    "wsd-sqrt": get_linear_schedule_with_wsd_sqrt,
+    "linear": get_linear_schedule_with_warmup
+}
+
+def get_scheduler(sched_type: str, **kwargs):
+    return SCHED_MAP[sched_type](**kwargs)

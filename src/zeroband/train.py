@@ -362,7 +362,7 @@ def train(config: Config):
 
                 else:
                     loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
-                    loss_batch += ce_loss.detach()
+                    loss_batch += loss.detach()
 
                 loss /= gradient_accumulation_steps
                 loss.backward()

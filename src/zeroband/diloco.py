@@ -1,3 +1,4 @@
+import re
 import time
 from pydantic_config import BaseConfig
 import torch
@@ -8,6 +9,7 @@ from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
 from torch.distributed._tensor.api import DTensor
+from functools import lru_cache
 
 
 class DilocoConfig(BaseConfig):
@@ -17,6 +19,13 @@ class DilocoConfig(BaseConfig):
 
     retry_all_reduce: int = 3
 
+@lru_cache(maxsize=None)
+def _find_first_number(s: str) -> int:
+    match = re.search(r'\d+', s)
+    if match:
+        return int(match.group())
+    else:
+        return -1
 
 class Diloco:
     """
@@ -89,7 +98,8 @@ class Diloco:
             try:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.time()
-                all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
+                for tensor_group in self._offloaded_grad_grouped_tensor:
+                    all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                 self._logger.info(
                     f"All reduce takes {time.time() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
                 )
@@ -113,15 +123,21 @@ class Diloco:
         """
         Offload the model parameters to cpu
         """
-        numels = sum(param.to_local().numel() for param in model.parameters() if param.requires_grad)
+        param_items = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
+        numels = sum(param.to_local().numel() for _, param in param_items)
+
         self.offloaded_data_flat_tensor = torch.empty((numels,), device="cpu", dtype=torch.float32)
-        self.offloaded_grad_flat_tensor = torch.zeros((numels,), device="cpu", dtype=torch.float32)
+        self.offloaded_grad_flat_tensor = torch.empty((numels,), device="cpu", dtype=torch.float32)
         current_offset = 0
         offloaded_params = []
+        param_group_cutoff = []
 
-        for param in model.parameters():
-            if not param.requires_grad:
-                continue
+        prev_id = None
+        for name, param in param_items:
+            if _find_first_number(name) != prev_id:
+                param_group_cutoff.append(current_offset)
+                prev_id = _find_first_number(name)
+
             # so here we copy the DTensor from gpu to cpu. The trick is that we need to recreate the DTensor with the correct
             # cpu devise mesh, otherwise we have a cpu DTensor with a cuda device mesh which will fail to do any communication
             target = param.data.to_local().detach()
@@ -146,6 +162,11 @@ class Diloco:
             offloaded_param.requires_grad = True
             offloaded_params.append(offloaded_param)
 
+        param_group_cutoff.append(current_offset)
+        self._logger.debug(f"Cutoffs: {param_group_cutoff}")
+
+        self._offloaded_grad_grouped_tensor = [self.offloaded_grad_flat_tensor.as_strided((j - i,), (1,), i) for i, j in zip(param_group_cutoff, param_group_cutoff[1:])]
+        self._logger.debug(f"Grouped Tensors({len(self._offloaded_grad_grouped_tensor)}){[i.numel() for i in self._offloaded_grad_grouped_tensor]}")
         return offloaded_params
 
     def step(self, model: nn.Module, fake: bool = False):

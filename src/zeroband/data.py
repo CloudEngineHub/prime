@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import IterableDataset, Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
+from torch.distributed.checkpoint.stateful import Stateful
 
 from datasets import load_dataset, interleave_datasets, load_dataset_builder, BuilderConfig
 from datasets.distributed import split_dataset_by_node
@@ -54,7 +55,7 @@ class BatchOutput(TypedDict):
     seqlens: list[int]
 
 
-class SequencePackingDataSet(IterableDataset):
+class SequencePackingDataSet(IterableDataset, Stateful):
     """
     This class wrap a dataset and wrap it into an iterable that return sequence of max_seq_length
     packed
@@ -97,6 +98,12 @@ class SequencePackingDataSet(IterableDataset):
                 inputs_ids = []
                 labels = []
                 seqlens = []
+
+    def state_dict(self):
+        return self.dataset.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.dataset.load_state_dict(state_dict)
 
 
 def collate_fn(samples: list[dict[str, torch.LongTensor]]) -> dict[str, torch.LongTensor]:

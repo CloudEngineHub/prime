@@ -66,7 +66,7 @@ class SequencePackingDataSet(IterableDataset):
     def __iter__(self) -> Generator[BatchOutput, Any, None]:
         inputs_ids = []
         labels = []
-        seqlens = [0]
+        seqlens = []
 
         for og_sample in self.dataset:
             og_sample: list[int]
@@ -94,7 +94,7 @@ class SequencePackingDataSet(IterableDataset):
                 }
                 inputs_ids = []
                 labels = []
-                seqlens = [0]
+                seqlens = []
 
 
 def get_dataloader(

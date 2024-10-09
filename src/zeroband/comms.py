@@ -191,8 +191,6 @@ class ElasticDeviceMesh:
 
         self.live_recovery.init_live_endpoint(self.global_store)
 
-        # Setting instance variables
-        self.leaving = False  # TODO: do we need this?
         # This is to match the barrier in maybe_reinit_global_pg.
         # We might be able to get away with only doing in joining path.
         # Let's not risk it for now though.
@@ -289,20 +287,27 @@ class ElasticDeviceMesh:
         # Set status to "reinit"
         self.global_store.set("status", "reinit")
 
-    def maybe_reinit_global_pg(self, admit_joiners: bool = False):
-        """Reinitialize the global_pg if there are joiners or dead nodes."""
+    def maybe_reinit_global_pg(self, admit_joiners: bool = False) -> bool:
+        """Reinitialize the global_pg if there are is a state change.
+        
+        Args:
+            admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
+        Returns:
+            bool: True if the global_pg was reinitialized, False otherwise.
+        """
 
         if self.world_info.global_world_size == 1:
             # no op if we only have one node
             return
 
         time_start = time.perf_counter()
-        self._logger.debug(f"[{self.world_info.global_unique_id}] Resolving world")
+        self._logger.debug("[%s] Resolving world", self.world_info.global_unique_id)
         if self._global_leader:
             self._resolve_world(admit_joiners=admit_joiners)
             self.global_store.set("resolved_time", str(time.time()))
         else:
             while (ans := self.global_store.get("resolved_time").decode("utf-8")) == self._last_resolved_time:
+                # TODO: Have a timeout here in case the leader is dead
                 time.sleep(TCPSTORE_POLLING_INTERVAL)
             self._last_resolved_time = ans
 
@@ -310,7 +315,7 @@ class ElasticDeviceMesh:
 
         status = self.global_store.get("status").decode("utf-8")
         if status == "running":  # No joiners or dead nodes
-            return
+            return False
 
         # Reinit Path
         self._logger.info("Reinitializing global_pg")
@@ -318,11 +323,8 @@ class ElasticDeviceMesh:
             self._logger.warning(
                 f"Global PG refcount was {sys.getrefcount(self.global_pg)} when 2 is expected during deletion. This may cause a memory leak."
             )
-        del self.global_pg
+        del self.global_pg # TODO(jackmin): Where do we catch errors in teardown?
         self._logger.info("Destroyed process group")
-        if self.leaving:
-            self._logger.info("Leaving")
-            return
 
         # Check if we got remapped
         old_global_rank = self.world_info.global_rank
@@ -338,10 +340,14 @@ class ElasticDeviceMesh:
         prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
 
         # Create process group
-        self.global_pg = dist.ProcessGroupGloo(
-            prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
-        )
-        self._logger.debug("Successfully recreated process group")
+        try:
+            self.global_pg = dist.ProcessGroupGloo(
+                prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
+            )
+            self._logger.debug("Successfully recreated process group")
+        except Exception as e:
+            self._logger.error(f"Error recreating process group: {e}. Retrying...")
+            return self.maybe_reinit_global_pg(admit_joiners=admit_joiners)
 
         if self._global_leader:
             self._clear_joiners()
@@ -350,8 +356,6 @@ class ElasticDeviceMesh:
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
-        # Without this barrier, a node might queue leave before the leaving queue is cleared
-        dist.barrier(self.global_pg)
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
 
     def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:

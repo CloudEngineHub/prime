@@ -17,3 +17,9 @@ weight_decay = 0.1
 
 [data]
 seq_length = 8192
+
+[diloco]
+inner_steps = 100
+compression = "uint8"
+
+

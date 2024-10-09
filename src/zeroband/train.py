@@ -367,9 +367,6 @@ def train(config: Config):
                 loss /= gradient_accumulation_steps
                 loss.backward()
 
-                loss.backward()
-                loss_batch += loss.detach()
-
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()
             scheduler.step()

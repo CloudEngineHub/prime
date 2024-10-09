@@ -6,6 +6,8 @@ import shutil
 import time
 from typing import Any
 from fsspec.generic import rsync as rsync_fsspec
+from pydantic import model_validator
+from pydantic_config import BaseConfig
 import torch
 from torch import nn
 from torch.optim import Optimizer
@@ -134,6 +136,30 @@ class OuterOptimizerWrapper(Stateful):
         self.optimizer.load_state_dict(state_dict)
 
 
+class CkptConfig(BaseConfig):
+    path: str | None = None
+    interval: int | None = None
+
+    remote_path: str | None = None  # could be a s3 path
+
+    live_recovery: bool = False
+
+    live_recovery_rank_src: int = 0
+
+    resume: str | None = None
+
+    load_dataloader: bool = True
+
+    @model_validator(mode="after")
+    def validate_path_and_interval(self):
+        if (self.path is None) != (self.interval is None):
+            raise ValueError("path and interval must be bpth set or both None")
+        if self.path is None and self.remote_path is not None:
+            raise ValueError("remote_path is set but path is not set")
+
+        return self
+
+
 class CkptManager:
     """Its name CkptManager because I (sami) always misstyped chekcpoint.
 
@@ -151,6 +177,7 @@ class CkptManager:
 
     def __init__(
         self,
+        config: CkptConfig,
         model: nn.Module,
         optimizer: Optimizer,
         scheduler: LambdaLR,
@@ -158,9 +185,10 @@ class CkptManager:
         training_progress: TrainingProgress,
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
-        live_ckpt_server: bool = False,
         live_recovery_port: int | None = None,
     ):
+        self.config = config
+
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -182,7 +210,7 @@ class CkptManager:
 
         self.async_save_process: list[multiprocessing.Process] = []
 
-        if live_ckpt_server:
+        if self.config.live_recovery:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
             shutil.rmtree(self.shm_path, ignore_errors=True)
             os.makedirs(self.shm_path, exist_ok=True)
@@ -223,7 +251,7 @@ class CkptManager:
             self.live_server.start_server()
         self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def save(self, ckpt_path: str, remote_ckpt_path: str | None, already_in_shm: bool = False) -> None:
+    def save(self) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
 
@@ -234,17 +262,19 @@ class CkptManager:
         shm_save=True mean we previsouly saved to shm so we just do a copy past to disk
         """
 
-        step_ckpt_path = os.path.join(ckpt_path, f"step_{self.training_progress.step}")
+        step_ckpt_path = os.path.join(self.config.path, f"step_{self.training_progress.step}")
 
-        if remote_ckpt_path is not None:
-            remote_ckpt_path = os.path.join(remote_ckpt_path, f"step_{self.training_progress.step}")
+        if self.config.remote_path is not None:
+            remote_ckpt_path = os.path.join(self.config.remote_path, f"step_{self.training_progress.step}")
 
-        if not already_in_shm:
+        if not self.config.live_recovery:
+            # if we are not in self recovery mode we save to disk
             self._save(step_ckpt_path)
             if self.world_info.local_rank == 0:
                 self._async_save_remote(step_ckpt_path, remote_ckpt_path)
 
         else:
+            # if we are in self recovery mode the ckpt is already in shm and we just copy
             if self.world_info.local_rank == 0:
                 self._async_save_remote(self.shm_path, step_ckpt_path)
                 self._async_save_remote(self.shm_path, remote_ckpt_path)

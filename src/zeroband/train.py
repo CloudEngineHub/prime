@@ -32,7 +32,7 @@ from zeroband.models.llama import get_model
 from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
-from zeroband.checkpoint import CkptManager, TrainingProgress
+from zeroband.checkpoint import CkptConfig, CkptManager, TrainingProgress
 from zeroband.lr_scheduler import get_scheduler
 
 
@@ -77,28 +77,6 @@ class TrainConfig(BaseConfig):
     def validate_attn_fn(self):
         if self.attn_fn == "sdpa" and self.sequence_packing:
             raise ValueError("SDPA does not support sequence packing")
-
-        return self
-
-
-class CkptConfig(BaseConfig):
-    path: str | None = None
-    interval: int | None = None
-
-    remote_path: str | None = None  # could be a s3 path
-
-    live_recovery: bool = False
-
-    live_recovery_rank_src: int = 0
-
-    resume: str | None = None
-
-    @model_validator(mode="after")
-    def validate_path_and_interval(self):
-        if (self.path is None) != (self.interval is None):
-            raise ValueError("path and interval must be bpth set or both None")
-        if self.path is None and self.remote_path is not None:
-            raise ValueError("remote_path is set but path is not set")
 
         return self
 
@@ -249,6 +227,7 @@ def train(config: Config):
     training_progress = TrainingProgress(total_tokens=0, outer_step=0, step=0)
 
     ckpt_manager = CkptManager(
+        config=config.ckpt,
         model=model,
         optimizer=inner_optimizer,
         scheduler=scheduler,
@@ -256,7 +235,6 @@ def train(config: Config):
         training_progress=training_progress,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
-        live_ckpt_server=config.ckpt.live_recovery,
         live_recovery_port=elastic_device_mesh.live_recovery.port if config.ckpt.live_recovery else None,
     )
 
@@ -267,7 +245,7 @@ def train(config: Config):
 
     if config.ckpt.resume is not None:
         # all is inplace
-        ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
+        ckpt_manager.load(resume_ckpt_path=config.ckpt.resume, skip_dataloader=config.ckpt.load_dataloader)
         if config.train.log_model_hash:
             logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
@@ -465,7 +443,7 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path, already_in_shm=config.ckpt.live_recovery)
+            ckpt_manager.save()
 
         if config.diloco:
             tokens_per_second = (

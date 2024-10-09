@@ -3,7 +3,6 @@ project = "debug_1B_zero_band"
 
 [train]
 micro_bs = 16  
-sharding_strategy = "SHARD_GRAD_OP"
 
 [optim]
 batch_size = 2048

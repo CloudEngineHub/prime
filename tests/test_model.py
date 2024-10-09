@@ -63,3 +63,37 @@ def test_attn(llama_config: ModelArgs):
     atol = ERROR_ATOL[torch.bfloat16]
     assert output_sdpa.shape == output_fa.shape
     torch.testing.assert_close(output_sdpa, output_fa, rtol=rtol, atol=atol)
+
+
+def test_sequence_packing(llama_config: ModelArgs):
+    """
+    In this test we take a sequence and pack it with itself along the seqlen dimension.
+    We then pass the packed sequence to the attention layer and check that the output for each sequence is the same.
+    """
+
+    llama_config.attn_fn = "flash"
+    model = Attention(llama_config).to("cuda")
+
+    emb = torch.nn.Embedding(10, llama_config.dim).to("cuda")
+
+    seq = [2, 1, 4, 8]
+    input_stuff_raw = torch.Tensor([seq + seq]).long().to("cuda")
+    seqlens = [len(seq), len(seq)]
+    seqlens = torch.Tensor(seqlens).int().to("cuda")
+
+    input_stuff = emb(input_stuff_raw)
+
+    freqs_cis = get_freqs_cis(llama_config)
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        output = model(input_stuff, freqs_cis, seqlens=seqlens)
+
+    output_left = output[:, :4, :]
+    output_right = output[:, 4:, :]
+
+    ### TESTING
+    assert output_left.shape == output_right.shape
+
+    rtol = ERROR_RTOL[torch.bfloat16]
+    atol = ERROR_ATOL[torch.bfloat16]
+    torch.testing.assert_close(output_left, output_right, atol=atol, rtol=rtol)

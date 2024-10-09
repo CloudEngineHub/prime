@@ -23,7 +23,7 @@ from zeroband.models.norms import build_norm
 
 flash_attn_available = find_spec("flash_attn") is not None
 if flash_attn_available:
-    from flash_attn import flash_attn_func
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
 
 
 @dataclass
@@ -180,6 +180,7 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        seqlens: torch.Tensor | None = None,
     ):
         """
         Forward pass of the attention module.
@@ -212,30 +213,63 @@ class Attention(nn.Module):
         xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        output = self.self_attention(xq, xk, xv)
+        output = self.self_attention(xq, xk, xv, seqlens)
 
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
 
-    def _sdpa_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+    def _sdpa_attention(self, xq, xk, xv) -> torch.Tensor:
         output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
         output = output.transpose(1, 2).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
         return output
 
-    def _flash_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+    def _flash_attention(self, xq, xk, xv) -> torch.Tensor:
         q = rearrange(xq, "b n t h -> b t n h")
         k = rearrange(xk, "b n t h -> b t n h")
         v = rearrange(xv, "b n t h -> b t n h")
         # q/k/b is [b, nh, t, hs] but fa2 expected [b , t, nh, hs]
         return flash_attn_func(q, k, v, causal=True)
 
-    def self_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+    def _fa_attention_with_seqlens(self, xq, xk, xv, seqlens) -> torch.Tensor:
+        b = xq.shape[0]
+        cu_seqlens = (
+            torch.concat([torch.tensor([0]).to(xq.device), seqlens.cumsum(0)], dim=0).to(torch.int32).to(xq.device)
+        )
+        max_seqlen = seqlens.max().item()
+
+        q = rearrange(xq, "b n t h -> (b t) n h")
+        k = rearrange(xk, "b n t h -> (b t) n h")
+        v = rearrange(xv, "b n t h -> (b t) n h")
+        # q/k/v is [b, nh, t, hs] but fa expected [b * t, nh, hs]
+
+        y = flash_attn_varlen_func(
+            q,
+            k,
+            v,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            causal=True,
+        )
+
+        y = rearrange(y, "(b t) n h -> b t n h", b=b)
+        return y
+
+    def self_attention(
+        self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor, seqlens: torch.Tensor | None = None
+    ) -> torch.Tensor:
         if self.attn_fn == "sdpa":
+            if seqlens is not None:
+                raise NotImplementedError("SDPA with seqlens is not implemented.")
             return self._sdpa_attention(xq, xk, xv)
         elif self.attn_fn == "flash":
             if not flash_attn_available:
                 raise RuntimeError("Flash attention is not available. Please install flash_attn.")
-            return self._flash_attention(xq, xk, xv)
+            if seqlens is not None:
+                return self._fa_attention_with_seqlens(xq, xk, xv, seqlens)
+            else:
+                return self._flash_attention(xq, xk, xv)
         else:
             raise ValueError(f"Unknown attention function: {self.attn_fn}")
 

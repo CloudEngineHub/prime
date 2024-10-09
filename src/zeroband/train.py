@@ -351,24 +351,31 @@ def train(config: Config):
                 flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
                 flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                if config.optim.z_loss is not None:
+                if config.optim.z_loss:
                     ce_loss, z_loss = cross_entropy_max_z_loss(
                         flatten_logits, flatten_labels, config.optim.z_loss_weight
                     )
-
                     ce_loss /= gradient_accumulation_steps
                     z_loss /= gradient_accumulation_steps
 
-                    loss_batch += ce_loss.detach()
-                    z_loss_batch += z_loss.detach()
-
-                    loss = ce_loss + z_loss
+                    del logits
+                    ce_loss.backward()
+                    z_loss.backward()
 
                 else:
                     loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
-                    loss_batch += loss.detach()
+                    del logits
+                    loss.backward()
 
-                loss.backward()
+                if config.optim.z_loss:
+                    loss_batch += ce_loss.clone().detach()
+                    z_loss_batch += z_loss.clone().detach()
+                else:
+                    loss_batch += loss.clone().detach()
+
+            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            if config.optim.z_loss:
+                dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()
@@ -378,10 +385,6 @@ def train(config: Config):
             # logging
             training_progress.step += 1
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
-
-            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
-            # if config.optim.z_loss:
-            #     dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
 
             # syncing loss across all data parallel rank within a nodes
 

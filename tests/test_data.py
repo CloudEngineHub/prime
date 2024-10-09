@@ -1,28 +1,11 @@
 import torch
-from zeroband.data import collate_causal_mask
+from zeroband.data import SequencePackingDataSet
 from torch.utils.data import DataLoader
 from zeroband.data import load_all_datasets, DataConfig, logger as data_logger
 from collections import Counter
 from itertools import chain
 import pytest
 import logging
-
-
-def test_collate_fn():
-    tensors = [[0, 1, 2, 3, 4], [0, 0, 3, 4, 1, 7]]
-
-    batch = [{"input_ids": torch.Tensor(tensor)} for tensor in tensors]
-
-    collate_fn = collate_causal_mask(max_seq_length=4)
-    collated = collate_fn(batch)
-
-    assert collated is not None
-
-    assert collated["input_ids"][0].tolist() == [0, 1, 2, 3]
-    assert collated["labels"][0].tolist() == [1, 2, 3, 4]
-
-    assert collated["input_ids"][1].tolist() == [0, 0, 3, 4]
-    assert collated["labels"][1].tolist() == [0, 3, 4, 1]
 
 
 @pytest.mark.parametrize(
@@ -95,3 +78,31 @@ def test_load_all_datasets_data_rank(ratio: str, lower: float, upper: float, dat
         first_10_c_shard = first_10_c_shard.union(set(range(i * (2**8), (i + 1) * (2**8))))
     assert all(i in first_a_shard for i in a_num_set)
     assert all(i in first_10_c_shard for i in c_num_set)
+
+
+def test_squence_packing():
+    class FakeDataset(torch.utils.data.Dataset):
+        def __init__(self):
+            self.data = [[6, 1, 2, 3, 4], [6, 3, 3, 4, 1, 7], [3, 2], [1, 2], [1, 4, 5, 3, 4, 1, 7, 8]]
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, index):
+            return self.data[index]
+
+    MAX_SEQ_LEN = 8
+    dataset = SequencePackingDataSet(FakeDataset(), max_seq_length=MAX_SEQ_LEN, eos_token=0)
+
+    input_ids = []
+    labels = []
+    for data in dataset:
+        assert data["input_ids"].shape[0] == MAX_SEQ_LEN
+        assert data["labels"].shape[0] == MAX_SEQ_LEN
+        assert sum(data["seqlens"]) == MAX_SEQ_LEN
+
+        input_ids.append(data["input_ids"].tolist())
+        labels.append(data["labels"].tolist())
+
+    assert input_ids == [[6, 1, 2, 3, 4, 6, 3, 3], [3, 2, 1, 2, 1, 4, 5, 3]]
+    assert labels == [[1, 2, 3, 4, 0, 3, 3, 4], [2, 0, 2, 0, 4, 5, 3, 4]]

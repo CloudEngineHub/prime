@@ -1,5 +1,4 @@
-from functools import partial
-from typing import Any, Generator, Optional, List, Dict, Union
+from typing import Any, Generator, Optional, List, Dict, TypedDict, Union
 from pydantic_config import BaseConfig
 from zeroband.utils.logging import get_logger
 
@@ -47,37 +46,55 @@ class FakeTokenizedDataset(IterableDataset):
             yield {"input_ids": input_ids}
 
 
-def collate_causal_mask(max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100) -> callable:
-    """collate function for causal mask. Fill with padding tokens if sequence is shorter than max_seq_length"""
-    return partial(_collate_fn_causal_mask, max_seq_length=max_seq_length, pad_id=pad_id, ignore_index=ignore_index)
+class BatchOutput(TypedDict):
+    input_ids: torch.IntTensor
+    labels: torch.IntTensor
+    seqlens: torch.IntTensor
 
 
-def _collate_fn_causal_mask(
-    samples: list[dict[str, torch.LongTensor]], max_seq_length: int = -1, pad_id: int = 0, ignore_index: int = -100
-) -> dict[str, torch.LongTensor]:
-    """collate function for causal mask. Fill with padding tokens if sequence is shorter than max_seq_length.
-    input_ids and labels are both of size max_seq_length.
+class SequencePackingDataSet(IterableDataset):
+    """
+    This class wrap a dataset and wrap it into an iterable that return sequence of max_seq_length
+    packed
     """
 
-    assert samples[0].keys() == {"input_ids"}
+    def __init__(self, dataset: Dataset, max_seq_length: int, eos_token: int):
+        self.dataset = dataset
+        self.max_seq_length = max_seq_length
+        self.eos_token = eos_token
 
-    batched = {"input_ids": [], "labels": []}
+    def __iter__(self) -> Generator[BatchOutput, Any, None]:
+        inputs_ids = []
+        labels = []
+        seqlens = [0]
 
-    if max_seq_length > 0:
-        max_seq_length += 1  # this makes sure that the effective seqlen is correct
+        for og_sample in self.dataset:
+            og_sample: list[int]
 
-    for sample in samples:
-        input_ids = torch.Tensor(sample["input_ids"]).long()
+            og_sample = og_sample + [self.eos_token]
+            sample_inputs_ids = og_sample[:-1]
+            sample_labels = og_sample[1:]
 
-        if len(input_ids) < max_seq_length:
-            input_ids = torch.cat([input_ids, torch.full((max_seq_length - len(input_ids),), pad_id)])
-        elif len(input_ids) > max_seq_length:
-            input_ids = input_ids[:max_seq_length]
+            token_remaining = self.max_seq_length - len(inputs_ids)
 
-        batched["input_ids"].append(input_ids[:-1])
-        batched["labels"].append(input_ids[1:])
+            if len(sample_inputs_ids) < token_remaining:
+                inputs_ids.extend(sample_inputs_ids)
+                labels.extend(sample_labels)
+                seqlens.append(len(sample_inputs_ids))
 
-    return {"input_ids": torch.stack(batched["input_ids"], dim=0), "labels": torch.stack(batched["labels"], dim=0)}
+            else:
+                inputs_ids.extend(sample_inputs_ids[:token_remaining])
+                labels.extend(sample_labels[:token_remaining])
+                seqlens.append(token_remaining)
+
+                yield {
+                    "input_ids": torch.Tensor(inputs_ids),
+                    "labels": torch.Tensor(labels),
+                    "seqlens": torch.Tensor(seqlens),
+                }
+                inputs_ids = []
+                labels = []
+                seqlens = [0]
 
 
 def get_dataloader(
@@ -95,11 +112,10 @@ def get_dataloader(
         tokenized_datasets = ds.map(tokenize_function, batched=True, remove_columns=["text", "attention_mask"])
         train_dataset = split_dataset_by_node(tokenized_datasets, world_size=world_size, rank=rank)
 
-    data_collator = collate_causal_mask(max_seq_length=data_config.seq_length, pad_id=pad_token_id, ignore_index=-100)
+    dataset = SequencePackingDataSet(train_dataset, data_config.seq_length, eos_token=tokenizer.eos_token_id)
 
     return StatefulDataLoader(
-        train_dataset,
-        collate_fn=data_collator,
+        dataset,
         batch_size=batch_size,
         num_workers=data_config.num_workers,
     )

@@ -359,9 +359,6 @@ def train(config: Config):
                     ce_loss /= gradient_accumulation_steps
                     z_loss /= gradient_accumulation_steps
 
-                    loss_batch += ce_loss.detach()
-                    z_loss_batch += z_loss.detach()
-
                     loss = ce_loss + z_loss
 
                 else:
@@ -369,6 +366,12 @@ def train(config: Config):
                     loss_batch += loss.detach()
 
                 loss.backward()
+
+                if config.optim.z_loss:
+                    loss_batch += ce_loss.detach()
+                    z_loss_batch += z_loss.detach()
+                else:
+                    loss_batch += loss.detach()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()

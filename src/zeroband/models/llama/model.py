@@ -236,7 +236,7 @@ class Attention(nn.Module):
         cu_seqlens = (
             torch.concat([torch.tensor([0]).to(xq.device), seqlens.cumsum(0)], dim=0).to(torch.int32).to(xq.device)
         )
-        max_seqlen = seqlens.max().item()
+        max_seqlen = seqlens.max()
 
         q = rearrange(xq, "b n t h -> (b t) n h")
         k = rearrange(xk, "b n t h -> (b t) n h")

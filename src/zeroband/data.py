@@ -1,3 +1,4 @@
+import random
 from typing import Any, Generator, Optional, List, Dict, TypedDict, Union
 from pydantic_config import BaseConfig
 from zeroband.utils.logging import get_logger
@@ -42,14 +43,15 @@ class FakeTokenizedDataset(IterableDataset):
 
     def __iter__(self) -> Generator[dict[str, Any], Any, None]:
         while True:
-            input_ids = torch.randint(3, self.vocab_size, (self.seq_len,)).tolist()
+            len_ = random.randint(1, self.seq_len)
+            input_ids = torch.randint(3, self.vocab_size, (len_,)).tolist()
             yield {"input_ids": input_ids}
 
 
 class BatchOutput(TypedDict):
     input_ids: torch.IntTensor
     labels: torch.IntTensor
-    seqlens: torch.IntTensor
+    seqlens: list[int]
 
 
 class SequencePackingDataSet(IterableDataset):
@@ -69,7 +71,7 @@ class SequencePackingDataSet(IterableDataset):
         seqlens = []
 
         for og_sample in self.dataset:
-            og_sample: list[int]
+            og_sample: list[int] = og_sample["input_ids"]
 
             og_sample = og_sample + [self.eos_token]
             sample_inputs_ids = og_sample[:-1]
@@ -88,17 +90,41 @@ class SequencePackingDataSet(IterableDataset):
                 seqlens.append(token_remaining)
 
                 yield {
-                    "input_ids": torch.Tensor(inputs_ids),
-                    "labels": torch.Tensor(labels),
-                    "seqlens": torch.Tensor(seqlens),
+                    "input_ids": torch.Tensor(inputs_ids).to(dtype=torch.long),
+                    "labels": torch.Tensor(labels).to(dtype=torch.long),
+                    "seqlens": seqlens,
                 }
                 inputs_ids = []
                 labels = []
                 seqlens = []
 
 
+def collate_fn(samples: list[dict[str, torch.LongTensor]]) -> dict[str, torch.LongTensor]:
+    assert samples[0].keys() == {"input_ids", "labels", "seqlens"}
+
+    inputs_ids = []
+    labels = []
+    seqlens = []
+
+    for sample in samples:
+        inputs_ids.append(sample["input_ids"])
+        labels.append(sample["labels"])
+
+        seqlens.extend(sample["seqlens"])
+
+    return {
+        "input_ids": torch.stack(inputs_ids, dim=0),
+        "labels": torch.stack(labels, dim=0),
+        "seqlens": torch.Tensor(seqlens).long(),
+    }
+
+
 def get_dataloader(
-    tokenizer, world_size: int, rank: int, batch_size: int, data_config: DataConfig, pad_token_id: int
+    tokenizer,
+    world_size: int,
+    rank: int,
+    batch_size: int,
+    data_config: DataConfig,
 ) -> DataLoader:
     if data_config.fake:
         train_dataset = FakeTokenizedDataset(data_config.seq_length, TEST_VOCAB_SIZE)
@@ -117,6 +143,7 @@ def get_dataloader(
     return StatefulDataLoader(
         dataset,
         batch_size=batch_size,
+        collate_fn=collate_fn,
         num_workers=data_config.num_workers,
     )
 

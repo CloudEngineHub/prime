@@ -143,7 +143,6 @@ def train(config: Config):
 
     if config.type_model == "llama2":
         tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
-        tokenizer.pad_token = "</s>"
     elif config.type_model == "llama3":
         tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B", use_fast=True)
     else:
@@ -156,7 +155,6 @@ def train(config: Config):
         world_size=world_info.world_size,
         rank=world_info.rank,
         batch_size=config.train.micro_bs,
-        pad_token_id=0 if config.type_model == "llama3" else tokenizer.pad_token_id,
         data_config=config.data,
     )
 
@@ -326,18 +324,17 @@ def train(config: Config):
                 input_ids = batch["input_ids"].to("cuda")
                 labels = batch["labels"].to("cuda")
 
-                logits = model(tokens=input_ids).contiguous()
+                seqlens = batch["seqlens"].to("cuda")
+                # seqlens has a dynamic shape but fixed dimension, this allow to still torch compile
+                # https://pytorch.org/docs/stable/torch.compiler_dynamic_shapes.html
+                torch._dynamo.mark_dynamic(seqlens, 0)
+
+                logits = model(tokens=input_ids, seqlens=seqlens).contiguous()
                 flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
                 flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                loss = (
-                    F.cross_entropy(
-                        flatten_logits,
-                        flatten_labels,
-                        ignore_index=0 if config.type_model == "llama3" else tokenizer.pad_token_id,
-                    )
-                    / gradient_accumulation_steps
-                )
+                loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
+
                 loss.backward()
                 loss_batch += loss.detach()
 

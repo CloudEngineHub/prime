@@ -5,6 +5,8 @@ import os
 import shutil
 import time
 from typing import Any
+import uuid
+import fsspec
 from fsspec.generic import rsync as rsync_fsspec
 from pydantic import model_validator
 from pydantic_config import BaseConfig
@@ -219,6 +221,31 @@ class CkptManager:
             self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=serve_path)
         else:
             self.shm_path = None
+
+        if self.world_info.local_rank == 0:
+            if self.config.path is not None:
+                self.check_path_access(self.config.path)
+
+            if self.config.remote_path is not None:
+                self.check_path_access(self.config.remote_path)
+
+    def check_path_access(
+        self,
+        ckpt_path: str,
+    ):
+        rank = uuid.uuid4()
+        dummy_file_path = os.path.join(ckpt_path, f".dummy_file_{rank}.txt")
+
+        try:
+            # Create the directory if it doesn't exist
+            fs, _ = fsspec.core.url_to_fs(ckpt_path)
+            fs.makedirs(ckpt_path, exist_ok=True)
+
+            with fsspec.open(dummy_file_path, "w") as f:
+                f.write("This is a dummy file for testing access.")
+        except Exception as e:
+            self._logger.error(f"Error checking path access {ckpt_path}: {e}, aborting training")
+            raise e
 
     def _init_state(self):
         # states can only be stateful object, hence we need to wrap Model and Optimizer

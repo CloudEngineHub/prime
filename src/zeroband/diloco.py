@@ -74,34 +74,29 @@ class Diloco:
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
+        _start_time = time.time()
         self._logger.debug("sync pseudo gradient" + " fake" if fake else "")
 
         self.elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=False)
         global_pg = self.elastic_device_mesh.global_pg
-        for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            if param.shape[0] == 0:
-                continue
+        for i in range(self.config.retry_all_reduce):
+            for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+                if fake:
+                    param_offloaded.grad.to_local().zero_()
+                else:
+                    param_offloaded.grad.to_local().copy_(param_offloaded.data.to_local())
+                    param_offloaded.grad.to_local().sub_(param.data.to_local().to(param_offloaded.data.device))
+            try:
+                self.offloaded_grad_flat_tensor.div_(global_pg.size())
+                _collective_start_time = time.time()
+                all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
+                self._logger.info(f"All reduce takes {time.time() - _collective_start_time:.6f} seconds")
+                break
+            except RuntimeError as e:
+                self._logger.error(f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}")
+                global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
 
-            for i in range(self.config.retry_all_reduce):
-                try:
-                    if fake:
-                        grad = torch.zeros_like(param_offloaded.data.to_local())
-                    else:
-                        grad = param_offloaded.data.to_local() - param.data.to_local().to(param_offloaded.data.device)
-
-                    grad = grad / global_pg.size()
-                    all_reduce(self.config.compression, grad, dist.ReduceOp.SUM, global_pg)
-                    # self._logger.debug(f"all_reduce {i} done")
-                    break
-                except RuntimeError as e:
-                    self._logger.error(
-                        f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}"
-                    )
-                    global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
-
-            param_offloaded.grad.to_local().copy_(grad)
-
-            # todo async here
+        self._logger.info(f"Sync psuedo-gradient in {time.time() - _start_time:.6f} seconds")
 
     def sync_inner_model(self, model: nn.Module):
         """

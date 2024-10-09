@@ -17,6 +17,8 @@ weight_decay = 0.1
 
 [data]
 seq_length = 8192
+dataset_name_or_paths = "PrimeIntellect/fineweb-edu,PrimeIntellect/fineweb,PrimeIntellect/StackV1-popular,mlfoundations/dclm-baseline-1.0-parquet,open-web-math/open-web-math"
+dataset_ratio = "55:10:20:10:5"
 
 [diloco]
 inner_steps = 100

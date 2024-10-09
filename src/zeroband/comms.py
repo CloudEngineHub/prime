@@ -191,11 +191,6 @@ class ElasticDeviceMesh:
 
         self.live_recovery.init_live_endpoint(self.global_store)
 
-        # This is to match the barrier in maybe_reinit_global_pg.
-        # We might be able to get away with only doing in joining path.
-        # Let's not risk it for now though.
-        self._logger.debug("Barrier on global pg")
-        dist.barrier(self.global_pg)
         self._last_resolved_time = self.global_store.get("resolved_time").decode("utf-8")
         self._logger.info(
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"

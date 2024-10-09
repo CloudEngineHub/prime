@@ -141,16 +141,16 @@ class OuterOptimizerWrapper(Stateful):
 class CkptConfig(BaseConfig):
     path: str | None = None
     interval: int | None = None
+    topk: int | None = None
 
     remote_path: str | None = None  # could be a s3 path
-
-    live_recovery: bool = False
-
-    live_recovery_rank_src: int = 0
 
     resume: str | None = None
 
     load_dataloader: bool = True
+
+    live_recovery: bool = False
+    live_recovery_rank_src: int = 0
 
     @model_validator(mode="after")
     def validate_path_and_interval(self):
@@ -297,6 +297,7 @@ class CkptManager:
         if not self.config.live_recovery:
             # if we are not in self recovery mode we save to disk
             self._save(step_ckpt_path)
+
             if self.world_info.local_rank == 0:
                 self._async_save_remote(step_ckpt_path, remote_ckpt_path)
 
@@ -305,6 +306,10 @@ class CkptManager:
             if self.world_info.local_rank == 0:
                 self._async_save_remote(self.shm_path, step_ckpt_path)
                 self._async_save_remote(self.shm_path, remote_ckpt_path)
+
+        if self.world_info.local_rank == 0:
+            if self.config.topk is not None:
+                delete_topk(self.config.path, self.config.topk)
 
     def _save(self, ckpt_path: str):
         if self.diloco_offloaded_optimizer:
@@ -440,6 +445,20 @@ class CkptManager:
         self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
 
         # we don't want the dataloader states to be loaded as they are not the same on each rank
+
+
+def delete_topk(ckpt_path: str, topk: int):
+    checkpoints_to_delete = get_checkpoints_to_delete(ckpt_path, topk)
+    for ckpt_path in checkpoints_to_delete:
+        shutil.rmtree(ckpt_path, ignore_errors=True)
+    if len(checkpoints_to_delete) > 0:
+        get_logger().info(f"Deleted {checkpoints_to_delete} checkpoints")
+
+
+def get_checkpoints_to_delete(ckpt_path: str, topk: int) -> list[str]:
+    checkpoints = [d for d in os.listdir(ckpt_path) if d.startswith("step_")]
+    sorted_checkpoints = sorted(checkpoints, key=lambda x: int(x.split("_")[1]), reverse=True)
+    return [os.path.join(ckpt_path, d) for d in sorted_checkpoints[topk:]]
 
 
 class CkptLiveServer:

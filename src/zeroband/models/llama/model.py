@@ -188,6 +188,7 @@ class Attention(nn.Module):
         Args:
             x (torch.Tensor): Input tensor.
             freqs_cis (torch.Tensor): Precomputed frequency tensor.
+            seqlens (torch.Tensor | None): Sequence lengths tensor for packing.
 
         Returns:
             torch.Tensor: Output tensor after attention.
@@ -364,6 +365,7 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        seqlens: torch.Tensor | None = None,
     ):
         """
         Perform a forward pass through the TransformerBlock.
@@ -376,7 +378,7 @@ class TransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(self.attention_norm(x), freqs_cis)
+        h = x + self.attention(self.attention_norm(x), freqs_cis, seqlens=seqlens)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -473,12 +475,13 @@ class Transformer(nn.Module):
             self.model_args.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor):
+    def forward(self, tokens: torch.Tensor, seqlens: torch.Tensor | None = None):
         """
         Perform a forward pass through the Transformer model.
 
         Args:
             tokens (torch.Tensor): Input token indices.
+            seqlens (torch.Tensor | None): Sequence lengths tensor for packing.
 
         Returns:
             torch.Tensor: Output logits after applying the Transformer model.
@@ -488,7 +491,7 @@ class Transformer(nn.Module):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.freqs_cis)
+            h = layer(h, self.freqs_cis, seqlens=seqlens)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h).float() if self.output else h

@@ -52,6 +52,7 @@ def test_attn(llama_config: ModelArgs):
     input_ = torch.rand(bs, seq_len, llama_config.dim).to("cuda")
 
     attn = Attention(llama_config).to("cuda")
+    attn.attn_fn = "sdpa"
 
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         output_sdpa = attn(input_, freqs_cis)
@@ -191,3 +192,24 @@ def test_sequence_packing_vs_normal_random(llama_config: ModelArgs):
 
         torch.testing.assert_close(output_1, output_packed_1, atol=atol, rtol=rtol)
         torch.testing.assert_close(output_2, output_packed_2, atol=atol, rtol=rtol)
+
+
+def test_end_to_end_packing(llama_config: ModelArgs):
+    llama_config.attn_fn = "flash"
+    model = Transformer(llama_config).to("cuda")
+
+    BS = 8
+    SEQ_LEN = 128
+
+    input_ = torch.randint(1, llama_config.vocab_size, (BS, SEQ_LEN)).to("cuda")
+
+    seqlens = [SEQ_LEN // 4, SEQ_LEN // 4, SEQ_LEN // 2]
+    seqlens = torch.Tensor(seqlens).int().to("cuda")
+
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        output = model(input_, seqlens=seqlens)
+
+    assert output.shape == (BS, SEQ_LEN, llama_config.vocab_size)
+
+    loss = output.mean()
+    loss.backward()  # test that the backward for fa2

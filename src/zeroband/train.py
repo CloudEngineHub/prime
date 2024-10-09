@@ -380,8 +380,8 @@ def train(config: Config):
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
             dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
-            if config.optim.z_loss:
-                dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # if config.optim.z_loss:
+            #     dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
 
             # syncing loss across all data parallel rank within a nodes
 

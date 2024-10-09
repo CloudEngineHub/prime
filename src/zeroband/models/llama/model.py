@@ -12,12 +12,18 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from importlib.util import find_spec
+from typing import Literal, Optional, Tuple
+from einops import rearrange
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 from zeroband.models.norms import build_norm
+
+flash_attn_available = find_spec("flash_attn") is not None
+if flash_attn_available:
+    from flash_attn import flash_attn_func
 
 
 @dataclass
@@ -38,6 +44,8 @@ class ModelArgs:
     # `False`, each uses the total number of transformer blocks
     depth_init: bool = True
     norm_type: str = "fused_rmsnorm"
+
+    attn_fn: Literal["sdpa", "flash"] = "sdpa"
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
@@ -156,6 +164,8 @@ class Attention(nn.Module):
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = model_args.dim // model_args.n_heads
 
+        self.attn_fn = model_args.attn_fn
+
         self.wq = nn.Linear(model_args.dim, model_args.n_heads * self.head_dim, bias=False)
         self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
@@ -202,11 +212,32 @@ class Attention(nn.Module):
         xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        # we use casual mask for training
-        output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
-        output = output.transpose(1, 2).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        output = self.self_attention(xq, xk, xv)
+
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
+
+    def _sdpa_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+        output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
+        output = output.transpose(1, 2).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        return output
+
+    def _flash_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+        q = rearrange(xq, "b n t h -> b t n h")
+        k = rearrange(xk, "b n t h -> b t n h")
+        v = rearrange(xv, "b n t h -> b t n h")
+        # q/k/b is [b, nh, t, hs] but fa2 expected [b , t, nh, hs]
+        return flash_attn_func(q, k, v, causal=True)
+
+    def self_attention(self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor) -> torch.Tensor:
+        if self.attn_fn == "sdpa":
+            return self._sdpa_attention(xq, xk, xv)
+        elif self.attn_fn == "flash":
+            if not flash_attn_available:
+                raise RuntimeError("Flash attention is not available. Please install flash_attn.")
+            return self._flash_attention(xq, xk, xv)
+        else:
+            raise ValueError(f"Unknown attention function: {self.attn_fn}")
 
 
 class FeedForward(nn.Module):

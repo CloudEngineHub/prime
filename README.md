@@ -35,6 +35,7 @@ source $HOME/.cargo/env
 uv venv
 source .venv/bin/activate
 uv sync --extra all
+uv pip install flash-attn --no-build-isolation
 git submodule update --init --recursive
 ```
 

@@ -66,6 +66,16 @@ class TrainConfig(BaseConfig):
     memory_monitor: bool = False
     memory_profiler: MemoryProfilerConfig | None = None
 
+    sequence_packing: bool = True
+    attn_fn: Literal["flash", "sdpa"] = "flash"
+
+    @model_validator(mode="after")
+    def validate_attn_fn(self):
+        if self.attn_fn == "sdpa" and self.sequence_packing:
+            raise ValueError("SDPA does not support sequence packing")
+
+        return self
+
 
 class CkptConfig(BaseConfig):
     path: str | None = None
@@ -163,6 +173,7 @@ def train(config: Config):
         config.type_model,
         vocab_size=len(tokenizer) if config.name_model != "debugmodel" or not config.data.fake else TEST_VOCAB_SIZE,
         seq_length=config.data.seq_length,
+        attn_fn=config.train.attn_fn,
     )
 
     if config.train.log_model_hash:
@@ -323,11 +334,13 @@ def train(config: Config):
                 batch = next(train_dataloader_iterator)
                 input_ids = batch["input_ids"].to("cuda")
                 labels = batch["labels"].to("cuda")
-
-                seqlens = batch["seqlens"].to("cuda")
-                # seqlens has a dynamic shape but fixed dimension, this allow to still torch compile
-                # https://pytorch.org/docs/stable/torch.compiler_dynamic_shapes.html
-                torch._dynamo.mark_dynamic(seqlens, 0)
+                if config.train.sequence_packing:
+                    seqlens = batch["seqlens"].to("cuda")
+                    # seqlens has a dynamic shape but fixed dimension, this allow to still torch compile
+                    # https://pytorch.org/docs/stable/torch.compiler_dynamic_shapes.html
+                    torch._dynamo.mark_dynamic(seqlens, 0)
+                else:
+                    seqlens = None
 
                 logits = model(tokens=input_ids, seqlens=seqlens).contiguous()
                 flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")

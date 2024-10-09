@@ -113,7 +113,7 @@ class Diloco:
         """
         Offload the model parameters to cpu
         """
-        numels = sum(param.numel() for param in model.parameters() if param.requires_grad)
+        numels = sum(param.to_local().numel() for param in model.parameters() if param.requires_grad)
         self.offloaded_data_flat_tensor = torch.empty((numels,), device="cpu", dtype=torch.float32)
         self.offloaded_grad_flat_tensor = torch.zeros((numels,), device="cpu", dtype=torch.float32)
         current_offset = 0

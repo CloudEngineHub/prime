@@ -26,8 +26,7 @@ def test_diloco_all_reduce(world_size, random_available_port, dist_environment):
         def __init__(self):
             self.global_pg = dist.new_group(backend="gloo")
 
-        def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:
-            return self.global_pg
+        def maybe_reinit_global_pg(self, *args, **kwargs) -> None: ...
 
     def all_reduce(rank: int, world_size: int):
         with dist_environment(random_available_port, rank=rank, world_size=world_size, global_unique_id=str(rank)):

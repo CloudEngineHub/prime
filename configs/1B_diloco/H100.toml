@@ -1,6 +1,5 @@
 name_model = "1B"
 project = "debug_1B_zero_band"
-type_model = "llama2"
 
 [train]
 micro_bs = 16  
@@ -10,3 +9,12 @@ batch_size = 2048
 warmup_steps = 1000
 total_steps = 88_000
 lr = 4e-4
+
+
+[diloco]
+inner_steps = 50
+
+[ckpt]
+path = "/data/outputs_1b_diloco_50"
+interval = 1000
+

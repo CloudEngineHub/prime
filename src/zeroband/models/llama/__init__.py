@@ -17,6 +17,7 @@ llama2_configs = {
     "271M": ModelArgs(dim=1024, n_layers=16, n_heads=8),
     "1B": ModelArgs(dim=2048, n_layers=18, n_heads=16),
     "7B": ModelArgs(dim=4096, n_layers=32, n_heads=32),
+    "10B": ModelArgs(dim=5120, n_layers=32, n_heads=40),
     "13B": ModelArgs(dim=5120, n_layers=40, n_heads=40),
     "26B": ModelArgs(dim=5120, n_layers=80, n_heads=40),
     "70B": ModelArgs(
@@ -34,6 +35,15 @@ llama3_configs = {
     "8B": ModelArgs(
         dim=4096,
         n_layers=32,
+        n_heads=32,
+        n_kv_heads=8,
+        ffn_dim_multiplier=1.3,
+        multiple_of=1024,
+        rope_theta=500000,
+    ),
+    "10B": ModelArgs(
+        dim=4096,
+        n_layers=42,
         n_heads=32,
         n_kv_heads=8,
         ffn_dim_multiplier=1.3,
@@ -61,7 +71,9 @@ llama3_configs = {
 }
 
 
-def get_model(name_model: str, type_model: str, vocab_size: int, seq_length: int) -> tuple[Transformer, ModelArgs]:
+def get_model(
+    name_model: str, type_model: str, vocab_size: int, seq_length: int, attn_fn: str
+) -> tuple[Transformer, ModelArgs]:
     """get the transformer model"""
 
     if type_model == "llama2":
@@ -73,4 +85,6 @@ def get_model(name_model: str, type_model: str, vocab_size: int, seq_length: int
 
     config.vocab_size = vocab_size
     config.max_seq_len = seq_length
+    config.attn_fn = attn_fn
+
     return Transformer(config), config

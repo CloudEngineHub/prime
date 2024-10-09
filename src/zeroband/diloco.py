@@ -6,14 +6,16 @@ from zeroband.collectives import Compression, all_reduce
 from zeroband.comms import ElasticDeviceMesh
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
-from torch.distributed.fsdp import ShardingStrategy
 import torch.distributed as dist
+from torch.distributed._tensor.api import DTensor
 
 
 class DilocoConfig(BaseConfig):
     outer_lr: float = 0.7
     inner_steps: int
     compression: Compression = Compression.NO
+
+    retry_all_reduce: int = 3
 
 
 class Diloco:
@@ -29,7 +31,7 @@ class Diloco:
 
     # Example usage in a training loop:
 
-    diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+    diloco = Diloco(config.diloco, model, elastic_device_mesh)
 
     for outer_step in range(num_outer_steps):
         for inner_step in range(config.diloco.inner_steps):
@@ -46,7 +48,6 @@ class Diloco:
         self,
         config: DilocoConfig,
         model: nn.Module,
-        fsdp_sharding_strategy: ShardingStrategy,
         elastic_device_mesh: ElasticDeviceMesh,
     ):
         self.config = config
@@ -55,14 +56,10 @@ class Diloco:
             from zeroband.C.collectives import ring_allreduce as _  # noqa: F401
             # just force compilation
 
-        self.fsdp_sharding_strategy = fsdp_sharding_strategy
         self.elastic_device_mesh = elastic_device_mesh
 
         self._logger = get_logger()
         self.world_info = get_world_info()
-
-        if self.fsdp_sharding_strategy not in [ShardingStrategy.FULL_SHARD, ShardingStrategy.SHARD_GRAD_OP]:
-            raise ValueError("Diloco only support FULL_SHARD and SHARD_GRAD_OP")
 
         self._init_offloaded_optimizer(model=model)
 
@@ -73,22 +70,37 @@ class Diloco:
         )
         self._logger.debug("offload model to cpu")
 
-    def sync_pseudo_gradient(self, model: nn.Module):
+    def sync_pseudo_gradient(self, model: nn.Module, fake: bool = False):
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
-        self._logger.debug("sync pseudo gradient")
-        global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+        self._logger.debug("sync pseudo gradient" + " fake" if fake else "")
 
+        self.elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=False)
+        global_pg = self.elastic_device_mesh.global_pg
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
-            param_offloaded.grad = param_offloaded.data - param.data.to(param_offloaded.device)
 
-            # gloo does not support AVG
-            param_offloaded.grad = param_offloaded.grad / global_pg.size()
+            for i in range(self.config.retry_all_reduce):
+                try:
+                    if fake:
+                        grad = torch.zeros_like(param_offloaded.data.to_local())
+                    else:
+                        grad = param_offloaded.data.to_local() - param.data.to_local().to(param_offloaded.data.device)
 
-            all_reduce(self.config.compression, param_offloaded.grad, dist.ReduceOp.SUM, global_pg)
+                    grad = grad / global_pg.size()
+                    all_reduce(self.config.compression, grad, dist.ReduceOp.SUM, global_pg)
+                    # self._logger.debug(f"all_reduce {i} done")
+                    break
+                except RuntimeError as e:
+                    self._logger.error(
+                        f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}"
+                    )
+                    global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+
+            param_offloaded.grad.to_local().copy_(grad)
+
             # todo async here
 
     def sync_inner_model(self, model: nn.Module):
@@ -98,7 +110,7 @@ class Diloco:
 
         self._logger.debug("sync inner model")
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
-            param.data.copy_(param_offloaded.data)  # todo: use copy_ here
+            param.data.to_local().copy_(param_offloaded.data.to_local())
 
     def get_offloaded_param(self, model: nn.Module) -> list[nn.Parameter]:
         """
@@ -108,22 +120,36 @@ class Diloco:
 
         for param in model.parameters():
             if param.requires_grad:
-                offloaded_param = param.data.detach().clone().to("cpu")
+                # so here we copy the DTensor from gpu to cpu. The trick is that we need to recreate the DTensor with the correct
+                # cpu devise mesh, otherwise we have a cpu DTensor with a cuda device mesh which will fail to do any communication
+
+                offloaded_param = nn.Parameter(
+                    DTensor.from_local(
+                        param.data.to_local().detach().to("cpu"),
+                        device_mesh=self.elastic_device_mesh.cpu_local_mesh,
+                        placements=param.data.placements,
+                    )
+                )
+                offloaded_param.grad = DTensor.from_local(
+                    torch.zeros_like(param.data.to_local()),
+                    device_mesh=self.elastic_device_mesh.cpu_local_mesh,
+                    placements=param.data.placements,
+                )
+                # here we pre-allocate the grad DTensor on cpu.
                 offloaded_param.requires_grad = True
                 offloaded_params.append(offloaded_param)
 
         return offloaded_params
 
-    def step(self, model: nn.Module):
+    def step(self, model: nn.Module, fake: bool = False):
         """
         Step the optimizer
         """
         time_start = time.perf_counter()
-        self.sync_pseudo_gradient(model)
+        self.sync_pseudo_gradient(model, fake=fake)
         self._logger.info(f"all reduce pseudo gradient in: {time.perf_counter() - time_start} seconds")
 
         if self.outer_optimizer is not None:
             self.outer_optimizer.step()
-            self.outer_optimizer.zero_grad()  # todo(sami): check if we can remove this
 
         self.sync_inner_model(model)

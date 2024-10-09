@@ -2,6 +2,7 @@ import sys
 import os
 import time
 from torch.distributed.device_mesh import init_device_mesh
+from zeroband.utils import get_random_available_port
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 import torch.distributed as dist
@@ -19,6 +20,10 @@ HEARTBEAT_INTERVAL = int(
 HEARTBEAT_TIMEOUT = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_TIMEOUT_SECONDS", "10")
 )  # Time in seconds after which a node is considered dead if no heartbeat is received
+
+LIVE_RECO_PORT = os.environ.get("ZERO_BAND_LIVE_RECO_PORT", None)
+
+LIVE_RECO_ADDR = os.environ.get("ZERO_BAND_LIVE_RECO_ADDR", "localhost")
 
 
 class ElasticDeviceMesh:
@@ -40,12 +45,14 @@ class ElasticDeviceMesh:
     local_pg: dist.ProcessGroup
     global_pg: dist.ProcessGroup
 
-    def __init__(self, backend: str = "cpu:gloo,cuda:nccl"):
+    def __init__(self, backend: str = "cpu:gloo,cuda:nccl", live_recovery: bool = False):
         self._logger = get_logger()
         self.world_info = get_world_info()
 
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
+        self.live_recovery = LiveRecovery(enable=live_recovery)
+
         if self.world_info.global_world_size > 1:
             self._init_global_pg()
 
@@ -60,6 +67,9 @@ class ElasticDeviceMesh:
 
         # Start heartbeat
         self._start_heartbeat()
+
+        self.cuda_local_mesh = init_device_mesh("cuda", mesh_shape=(self.local_pg.size(),))
+        self.cpu_local_mesh = init_device_mesh("cpu", mesh_shape=(self.local_pg.size(),))
 
         # Logging
         self._logger.info(f"global_pg size : {self.global_pg.size()}, local_pg size: {self.local_pg.size()}")
@@ -158,6 +168,7 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
             self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
             prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
+            self.live_recovery.need_live_recovery = self.live_recovery.enable
         else:
             # TODO: Could be in "reinit" status. We probably just recurse until running in this case
             raise RuntimeError(f"Unknown status {self.global_status}")
@@ -177,6 +188,8 @@ class ElasticDeviceMesh:
             self.global_store.set("resolved_time", str(time.time()))
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
+
+        self.live_recovery.init_live_endpoint(self.global_store)
 
         # Setting instance variables
         self.leaving = False  # TODO: do we need this?
@@ -346,3 +359,39 @@ class ElasticDeviceMesh:
         if maybe_reinit:
             self.maybe_reinit_global_pg()
         return self.global_pg
+
+
+class LiveRecovery:
+    """
+    Each Node expose an http server saving the lastest ckpt.
+    Each adress serving a ckpt is save in the store.
+    When a new node is joinings it retrieve the adress fron the store and downloading the latest ckpk.
+    """
+
+    def __init__(self, enable: bool):
+        self.need_live_recovery = False
+        self.store: dist.Store | None = None
+        self.world_info = get_world_info()
+        self._logger = get_logger()
+
+        self.enable = enable
+
+        if LIVE_RECO_PORT is None:
+            self.port = get_random_available_port()
+        else:
+            self.port = int(LIVE_RECO_PORT)
+
+    def init_live_endpoint(self, store: dist.Store):
+        """
+        Put its own address to the store so that other nodes can connect to it for live recovery
+        """
+        if not self.enable:
+            return
+        self.store = dist.PrefixStore("live_reco_address", store)
+
+        self._logger.debug(f"Live recovery address: {LIVE_RECO_ADDR}:{self.port}")
+        self.store.set(f"address_{self.world_info.global_rank}", f"{LIVE_RECO_ADDR}:{self.port}")
+
+    def get_address(self, global_rank: int) -> str:
+        """Get the live recovery address for a given rank."""
+        return self.store.get(f"address_{global_rank}").decode("utf-8")

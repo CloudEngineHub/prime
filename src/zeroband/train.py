@@ -1,42 +1,39 @@
 import os
-from contextlib import nullcontext
 from typing import Literal
 import time
+from pydantic import model_validator
 
 import torch
 from pydantic_config import parse_argv, BaseConfig
 from einops import rearrange
 from torch.nn import functional as F
 
-from transformers import (
-    AutoTokenizer,
-    get_cosine_schedule_with_warmup,
-)
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-)
+from transformers import AutoTokenizer
+
+from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+
 import torch.distributed as dist
 from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
 from zeroband.loss import cross_entropy_max_z_loss
 
-from zeroband.utils import GPUMemoryMonitor, PerfCounter, get_module_signature, get_sharding_strategy
+from zeroband.utils import (
+    GPUMemoryMonitor,
+    PerfCounter,
+    get_module_signature,
+    get_optimizer_signature,
+)
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
-from zeroband.utils.monitor import WandbMonitor, DummyMonitor
-from zeroband.data import TEST_VOCAB_SIZE, get_dataloader
+from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
+from zeroband.utils.metric_logger import WandbMetricLogger, DummyMetricLogger
+from zeroband.utils.monitor import HttpMonitor
 from zeroband.models.llama import get_model
 from zeroband.utils.profiler import MemoryProfiler
 from zeroband.utils.world_info import get_world_info
 from zeroband.utils.logging import get_logger
 from zeroband.checkpoint import CkptManager, TrainingProgress
-
-
-class DataConfig(BaseConfig):
-    seq_length: int = 1024
-    fake: bool = False
-    num_workers: int = 4
+from zeroband.lr_scheduler import get_scheduler
 
 
 class OptimConfig(BaseConfig):
@@ -45,7 +42,9 @@ class OptimConfig(BaseConfig):
     adam_betas1: float = 0.9
     adam_betas2: float = 0.95
 
+    sched_type: Literal["cosine", "linear", "wsd-sqrt"] = "cosine"
     warmup_steps: int = 1000
+    stable_steps: int = 80_000
     total_steps: int = 88_000
     batch_size: int = 512
 
@@ -61,27 +60,62 @@ class MemoryProfilerConfig(BaseConfig):
 class TrainConfig(BaseConfig):
     micro_bs: int
     torch_compile: bool = True
-    sharding_strategy: str = "SHARD_GRAD_OP"
     ac_ckpt: bool | int = False
+    reshard_after_forward: bool = True  # old shard grad op True mean full shard
+
+    reduce_fp32: bool = False  # should be True if SXM. Keep to false as default for backward compatibility
+
     log_model_hash: bool = False
 
     memory_monitor: bool = False
     memory_profiler: MemoryProfilerConfig | None = None
 
+    sequence_packing: bool = True
+    attn_fn: Literal["flash", "sdpa"] = "flash"
+
+    @model_validator(mode="after")
+    def validate_attn_fn(self):
+        if self.attn_fn == "sdpa" and self.sequence_packing:
+            raise ValueError("SDPA does not support sequence packing")
+
+        return self
+
 
 class CkptConfig(BaseConfig):
-    path: str
-    interval: int
+    path: str | None = None
+    interval: int | None = None
 
     remote_path: str | None = None  # could be a s3 path
+
+    live_recovery: bool = False
+
+    live_recovery_rank_src: int = 0
+
+    resume: str | None = None
+
+    @model_validator(mode="after")
+    def validate_path_and_interval(self):
+        if (self.path is None) != (self.interval is None):
+            raise ValueError("path and interval must be bpth set or both None")
+        if self.path is None and self.remote_path is not None:
+            raise ValueError("remote_path is set but path is not set")
+
+        return self
+
+
+class MonitorConfig(BaseConfig):
+    log_flush_interval: int = 10
+    base_url: str | None = None
+    auth_token: str | None = None
 
 
 class Config(BaseConfig):
     # main config
-    name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "13B", "26B", "70B"] = "150M"
-    type_model: Literal["llama2", "llama3"] = "llama2"
+    name_model: Literal["debugmodel", "150M", "271M", "1B", "7B", "10B", "13B", "26B", "70B"] = "150M"
+    type_model: Literal["llama2", "llama3"] = "llama3"
 
     project: str = "zeroband"
+    run_id: str | None = None
     metric_logger_type: Literal["wandb", "dummy"] = "wandb"
 
     # sub config
@@ -89,14 +123,26 @@ class Config(BaseConfig):
     data: DataConfig = DataConfig()
     optim: OptimConfig = OptimConfig()
     train: TrainConfig
+    monitor: MonitorConfig | None = None
 
-    ckpt: CkptConfig | None = None
-    resume: str | None = None
+    ckpt: CkptConfig = CkptConfig()
+
+    @model_validator(mode="after")
+    def live_reco_very_check(self):
+        if self.ckpt.live_recovery and self.diloco is None:
+            raise ValueError("Live recovery is a diloco feature. Diloco must be set if live recovery is set")
+        return self
+
+    @model_validator(mode="after")
+    def ckpt_diloco_step(self):
+        if self.ckpt is not None and self.ckpt.interval is not None and self.diloco is not None:
+            assert (
+                self.ckpt.interval % self.diloco.inner_steps == 0
+            ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
+        return self
 
 
 def train(config: Config):
-    sharding_strategy = get_sharding_strategy(config.train.sharding_strategy)
-
     # batch_size is the total batch size for all GPUs
     assert config.optim.batch_size % world_info.local_world_size == 0
     batch_size = config.optim.batch_size // world_info.local_world_size
@@ -109,28 +155,29 @@ def train(config: Config):
             config.ckpt.interval % config.diloco.inner_steps == 0
         ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
 
-    tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
-    tokenizer.pad_token = "</s>"  # todo(sami): remove padding tokens once we have context stuffing
+    if config.type_model == "llama2":
+        tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.1", use_fast=True)
+    elif config.type_model == "llama3":
+        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B", use_fast=True)
+    else:
+        raise ValueError(f"Model type {config.type_model} not supported")
 
     logger.debug("tokenizer loaded")
 
     train_dataloader = get_dataloader(
         tokenizer=tokenizer,
-        world_size=world_info.world_size * world_info.global_world_size,
-        rank=world_info.rank + world_info.global_rank * world_info.global_world_size,
-        seq_length=config.data.seq_length,
+        world_size=world_info.world_size,
+        rank=world_info.rank,
         batch_size=config.train.micro_bs,
-        num_workers=config.data.num_workers,
-        fake_data=config.data.fake,
+        data_config=config.data,
     )
 
     model, model_config = get_model(
         config.name_model,
         config.type_model,
-        vocab_size=tokenizer.vocab_size
-        if config.name_model != "debugmodel" or not config.data.fake
-        else TEST_VOCAB_SIZE,
+        vocab_size=len(tokenizer) if config.name_model != "debugmodel" or not config.data.fake else TEST_VOCAB_SIZE,
         seq_length=config.data.seq_length,
+        attn_fn=config.train.attn_fn,
     )
 
     if config.train.log_model_hash:
@@ -155,14 +202,28 @@ def train(config: Config):
         num = 1 if isinstance(config.train.ac_ckpt, bool) else config.train.ac_ckpt
         apply_ac_ckpt(model, num)
 
-    elastic_device_mesh = ElasticDeviceMesh()
+    elastic_device_mesh = ElasticDeviceMesh(live_recovery=config.ckpt.live_recovery)
 
-    model = FSDP(
+    mp_policy = MixedPrecisionPolicy(
+        param_dtype=torch.bfloat16, reduce_dtype=torch.float32 if config.train.reduce_fp32 else None
+    )
+
+    for layer_id, transformer_block in model.layers.items():
+        if config.train.reshard_after_forward:
+            reshard_after_forward = int(layer_id) < len(model.layers) - 1
+        else:
+            reshard_after_forward = False
+        fully_shard(
+            transformer_block,
+            mp_policy=mp_policy,
+            mesh=elastic_device_mesh.cuda_local_mesh,
+            reshard_after_forward=reshard_after_forward,
+        )
+    fully_shard(
         model,
-        sharding_strategy=sharding_strategy,
-        mixed_precision=MixedPrecision(param_dtype=torch.bfloat16),
-        use_orig_params=True,
-        process_group=elastic_device_mesh.local_pg if config.diloco is not None else None,
+        mp_policy=mp_policy,
+        mesh=elastic_device_mesh.cuda_local_mesh,
+        reshard_after_forward=config.train.reshard_after_forward,
     )
     logger.debug("model fsdped")
 
@@ -175,11 +236,13 @@ def train(config: Config):
     )
 
     if config.diloco is not None:
-        diloco = Diloco(config.diloco, model, sharding_strategy, elastic_device_mesh)
+        diloco = Diloco(config.diloco, model, elastic_device_mesh)
 
-    scheduler = get_cosine_schedule_with_warmup(
-        inner_optimizer,
+    scheduler = get_scheduler(
+        sched_type=config.optim.sched_type,
+        optimizer=inner_optimizer,
         num_warmup_steps=config.optim.warmup_steps,
+        num_stable_steps=config.optim.stable_steps,
         num_training_steps=config.optim.total_steps,
     )
 
@@ -193,6 +256,8 @@ def train(config: Config):
         training_progress=training_progress,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
+        live_ckpt_server=config.ckpt.live_recovery,
+        live_recovery_port=elastic_device_mesh.live_recovery.port if config.ckpt.live_recovery else None,
     )
 
     if config.train.torch_compile:
@@ -200,20 +265,47 @@ def train(config: Config):
         model = torch.compile(model)
         logger.debug("model compiled")
 
-    if config.resume is not None:
+    if config.ckpt.resume is not None:
         # all is inplace
-        ckpt_manager.load(resume_ckpt_path=config.resume)
+        ckpt_manager.load(resume_ckpt_path=config.ckpt.resume)
+        if config.train.log_model_hash:
+            logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
-    model.train()
+    if elastic_device_mesh.live_recovery.need_live_recovery:
+        ckpt_manager.download_and_load_ckpt_from_peers(
+            elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
+        )
+        elastic_device_mesh.live_recovery.need_live_recovery = False
+        training_progress.step += config.diloco.inner_steps
+
+        if config.train.log_model_hash:
+            logger.debug("Pre diloco model: %s", get_module_signature(model))
+
+        diloco.step(model, fake=True)
+
+        if config.train.log_model_hash:
+            logger.debug("Post diloco model: %s", get_module_signature(model))
+
+        # do we even need to do a fake step here ? Since the inner model and outer model are the same
+        # the tensor should automatically be zero
+        training_progress.outer_step += 1
 
     if world_info.rank == 0:
-        logger_cls = WandbMonitor if config.metric_logger_type == "wandb" else DummyMonitor
-        metric_logger = logger_cls(project=config.project, config=config.model_dump(), resume=False)
+        logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
+        metric_logger = logger_cls(
+            project=config.project,
+            config={"config": config.model_dump(), "world_info": world_info.json()},
+            resume=False,
+        )
 
     if config.train.memory_monitor:
         gpu_mem_monitor = GPUMemoryMonitor()
     if config.train.memory_profiler is not None:
         memory_profiler = MemoryProfiler(config.train.memory_profiler.freq, config.train.memory_profiler.snapshot_dir)
+
+    if config.monitor is not None:
+        monitor = HttpMonitor(config=config.model_dump(), resume=False)
+        monitor.set_stage("init")
 
     train_dataloader_iterator = iter(train_dataloader)
 
@@ -221,6 +313,7 @@ def train(config: Config):
     perf_counter = PerfCounter(window_size=10)
 
     logger.info("starting training")
+
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -232,34 +325,55 @@ def train(config: Config):
             if config.optim.z_loss:
                 z_loss_batch = 0
 
+        elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+        # at the beginning of the inner steps we allow joiner to arrive.
+        # We maybe reinit before the all reduce but only to allow leaving, not to join anymore
+
+        if world_info.rank == 0 and config.monitor is not None:
+            monitor.set_stage("inner_loop")
+
+        for inner_step in range(num_inner_steps):
+            loss_batch = 0
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
+                # no sync if we are accumulating gradients
+                model.set_requires_gradient_sync(not is_accumulating)
+
                 batch = next(train_dataloader_iterator)
                 input_ids = batch["input_ids"].to("cuda")
                 labels = batch["labels"].to("cuda")
+                if config.train.sequence_packing:
+                    seqlens = batch["seqlens"].to("cuda")
+                    # seqlens has a dynamic shape but fixed dimension, this allow to still torch compile
+                    # https://pytorch.org/docs/stable/torch.compiler_dynamic_shapes.html
+                    torch._dynamo.mark_dynamic(seqlens, 0)
+                else:
+                    seqlens = None
 
-                with model.no_sync() if is_accumulating else nullcontext():
-                    logits = model(tokens=input_ids).contiguous()
-                    flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
-                    flatten_labels = rearrange(labels, "b seq -> (b seq)")
+                logits = model(tokens=input_ids, seqlens=seqlens).contiguous()
+                flatten_logits = rearrange(logits, "b seq vocab -> (b seq) vocab")
+                flatten_labels = rearrange(labels, "b seq -> (b seq)")
 
-                    if config.optim.z_loss is not None:
-                        ce_loss, z_loss = cross_entropy_max_z_loss(
-                            flatten_logits, flatten_labels, config.optim.z_loss_weight, tokenizer.pad_token_id
-                        )
-                        loss_batch += ce_loss.detach()
-                        z_loss_batch += z_loss.detach()
+                if config.optim.z_loss is not None:
+                    ce_loss, z_loss = cross_entropy_max_z_loss(
+                        flatten_logits, flatten_labels, config.optim.z_loss_weight
+                    )
+                    loss_batch += ce_loss.detach()
+                    z_loss_batch += z_loss.detach()
 
-                        loss = ce_loss + z_loss
+                    loss = ce_loss + z_loss
 
-                    else:
-                        loss = F.cross_entropy(flatten_logits, flatten_labels, ignore_index=tokenizer.pad_token_id)
-                        loss_batch += ce_loss.detach()
+                else:
+                    loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps
+                    loss_batch += ce_loss.detach()
 
-                    loss /= gradient_accumulation_steps
-                    loss.backward()
+                loss /= gradient_accumulation_steps
+                loss.backward()
 
-            model.clip_grad_norm_(1.0)  # gradient clipping
+                loss.backward()
+                loss_batch += loss.detach()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             inner_optimizer.step()
             scheduler.step()
             inner_optimizer.zero_grad()
@@ -289,6 +403,7 @@ def train(config: Config):
                 "inner_lr": inner_lr,
                 "Perplexity": torch.exp(loss_batch).item(),
                 "total_tokens": training_progress.total_tokens,
+                "time": time.time(),
             }
             if config.optim.z_loss:
                 metrics["z_loss"] = z_loss_batch.item()
@@ -314,6 +429,8 @@ def train(config: Config):
 
             if world_info.rank == 0:
                 metric_logger.log(metrics)
+                if config.monitor is not None:
+                    monitor.log(metrics)
 
             logger.info(log)
 
@@ -322,22 +439,32 @@ def train(config: Config):
 
         if config.diloco is not None:
             if config.train.log_model_hash:
-                with FSDP.summon_full_params(model):
-                    logger.debug("Pre diloco model: %s", get_module_signature(model))
+                logger.debug("Pre diloco model: %s", get_module_signature(model))
+
+            if world_info.rank == 0 and config.monitor is not None:
+                monitor.set_stage("outer_loop")
+
             diloco.step(model)
+
             if config.train.log_model_hash:
-                with FSDP.summon_full_params(model):
-                    logger.debug("Post diloco model: %s", get_module_signature(model))
+                logger.debug("Post diloco model: %s", get_module_signature(model))
+
+            if config.train.log_model_hash:
+                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
         training_progress.outer_step += 1
 
+        if config.ckpt.live_recovery:
+            # we save after each outer step sync when using shm save. Used usually for live recovery
+            ckpt_manager.save_shm()
+
         if (
-            config.ckpt is not None
+            config.ckpt.interval is not None
             and training_progress.step > 0
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path)
+            ckpt_manager.save(config.ckpt.path, config.ckpt.remote_path, already_in_shm=config.ckpt.live_recovery)
 
         if config.diloco:
             tokens_per_second = (
@@ -360,6 +487,8 @@ def train(config: Config):
 
     if world_info.rank == 0:
         metric_logger.finish()
+        if config.monitor is not None:
+            monitor.finish()
 
     ckpt_manager.wait_async_save_process()
 

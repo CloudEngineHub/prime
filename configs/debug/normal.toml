@@ -1,10 +1,10 @@
 name_model = "debugmodel"
 project = "/tmp/debug"
 metric_logger_type = "dummy"
+type_model = "llama2"
 
 [train]
 micro_bs = 8
-sharding_strategy = "SHARD_GRAD_OP"
 
 [optim]
 batch_size = 16

@@ -12,12 +12,18 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from importlib.util import find_spec
+from typing import Literal, Optional, Tuple
+from einops import rearrange
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 from zeroband.models.norms import build_norm
+
+flash_attn_available = find_spec("flash_attn") is not None
+if flash_attn_available:
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
 
 
 @dataclass
@@ -38,6 +44,8 @@ class ModelArgs:
     # `False`, each uses the total number of transformer blocks
     depth_init: bool = True
     norm_type: str = "fused_rmsnorm"
+
+    attn_fn: Literal["sdpa", "flash"] = "sdpa"
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
@@ -156,6 +164,8 @@ class Attention(nn.Module):
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = model_args.dim // model_args.n_heads
 
+        self.attn_fn = model_args.attn_fn
+
         self.wq = nn.Linear(model_args.dim, model_args.n_heads * self.head_dim, bias=False)
         self.wk = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(model_args.dim, self.n_kv_heads * self.head_dim, bias=False)
@@ -170,6 +180,7 @@ class Attention(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        seqlens: torch.Tensor | None = None,
     ):
         """
         Forward pass of the attention module.
@@ -177,6 +188,7 @@ class Attention(nn.Module):
         Args:
             x (torch.Tensor): Input tensor.
             freqs_cis (torch.Tensor): Precomputed frequency tensor.
+            seqlens (torch.Tensor | None): Sequence lengths tensor for packing.
 
         Returns:
             torch.Tensor: Output tensor after attention.
@@ -202,11 +214,65 @@ class Attention(nn.Module):
         xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        # we use casual mask for training
-        output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
-        output = output.transpose(1, 2).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        output = self.self_attention(xq, xk, xv, seqlens)
+
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
+
+    def _sdpa_attention(self, xq, xk, xv) -> torch.Tensor:
+        output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
+        output = output.transpose(1, 2).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        return output
+
+    def _flash_attention(self, xq, xk, xv) -> torch.Tensor:
+        q = rearrange(xq, "b n t h -> b t n h")
+        k = rearrange(xk, "b n t h -> b t n h")
+        v = rearrange(xv, "b n t h -> b t n h")
+        # q/k/b is [b, nh, t, hs] but fa2 expected [b , t, nh, hs]
+        return flash_attn_func(q, k, v, causal=True)
+
+    def _fa_attention_with_seqlens(self, xq, xk, xv, seqlens) -> torch.Tensor:
+        b = xq.shape[0]
+        cu_seqlens = (
+            torch.concat([torch.tensor([0]).to(xq.device), seqlens.cumsum(0)], dim=0).to(torch.int32).to(xq.device)
+        )
+        max_seqlen = seqlens.max()
+
+        q = rearrange(xq, "b n t h -> (b t) n h")
+        k = rearrange(xk, "b n t h -> (b t) n h")
+        v = rearrange(xv, "b n t h -> (b t) n h")
+        # q/k/v is [b, nh, t, hs] but fa expected [b * t, nh, hs]
+
+        y = flash_attn_varlen_func(
+            q,
+            k,
+            v,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            causal=True,
+        )
+
+        y = rearrange(y, "(b t) n h -> b t n h", b=b)
+        return y
+
+    def self_attention(
+        self, xq: torch.Tensor, xk: torch.Tensor, xv: torch.Tensor, seqlens: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        if self.attn_fn == "sdpa":
+            if seqlens is not None:
+                raise NotImplementedError("SDPA with seqlens is not implemented.")
+            return self._sdpa_attention(xq, xk, xv)
+        elif self.attn_fn == "flash":
+            if not flash_attn_available:
+                raise RuntimeError("Flash attention is not available. Please install flash_attn.")
+            if seqlens is not None:
+                return self._fa_attention_with_seqlens(xq, xk, xv, seqlens)
+            else:
+                return self._flash_attention(xq, xk, xv)
+        else:
+            raise ValueError(f"Unknown attention function: {self.attn_fn}")
 
 
 class FeedForward(nn.Module):
@@ -299,6 +365,7 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
+        seqlens: torch.Tensor | None = None,
     ):
         """
         Perform a forward pass through the TransformerBlock.
@@ -311,7 +378,7 @@ class TransformerBlock(nn.Module):
             torch.Tensor: Output tensor after applying attention and feedforward layers.
 
         """
-        h = x + self.attention(self.attention_norm(x), freqs_cis)
+        h = x + self.attention(self.attention_norm(x), freqs_cis, seqlens=seqlens)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
 
@@ -408,12 +475,13 @@ class Transformer(nn.Module):
             self.model_args.rope_theta,
         )
 
-    def forward(self, tokens: torch.Tensor):
+    def forward(self, tokens: torch.Tensor, seqlens: torch.Tensor | None = None):
         """
         Perform a forward pass through the Transformer model.
 
         Args:
             tokens (torch.Tensor): Input token indices.
+            seqlens (torch.Tensor | None): Sequence lengths tensor for packing.
 
         Returns:
             torch.Tensor: Output logits after applying the Transformer model.
@@ -423,7 +491,7 @@ class Transformer(nn.Module):
         h = self.tok_embeddings(tokens) if self.tok_embeddings else tokens
 
         for layer in self.layers.values():
-            h = layer(h, self.freqs_cis)
+            h = layer(h, self.freqs_cis, seqlens=seqlens)
 
         h = self.norm(h) if self.norm else h
         output = self.output(h).float() if self.output else h

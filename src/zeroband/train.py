@@ -359,8 +359,8 @@ def train(config: Config):
                     z_loss /= gradient_accumulation_steps
 
                     del logits
-                    ce_loss.backward()
-                    z_loss.backward()
+                    loss = ce_loss + z_loss
+                    loss.backward()
 
                 else:
                     loss = F.cross_entropy(flatten_logits, flatten_labels) / gradient_accumulation_steps

@@ -14,7 +14,8 @@ dependencies = [
     "einops",
     "torchdata>=0.8.0",
     "fsspec[gcs]>=2024.3.1",
-    "ninja"
+    "ninja",
+    "zstandard"
 ]
 
 [project.optional-dependencies]

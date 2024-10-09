@@ -12,7 +12,6 @@ from transformers import AutoTokenizer
 
 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
-import torch.distributed as dist
 from zeroband import utils
 from zeroband.diloco import Diloco, DilocoConfig
 from zeroband.comms import ElasticDeviceMesh
@@ -379,9 +378,8 @@ def train(config: Config):
             training_progress.step += 1
             inner_lr = [group["lr"] for group in inner_optimizer.param_groups][0]
 
-            dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
-            if config.optim.z_loss:
-                dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
+            # dist.all_reduce(tensor=z_loss_batch, op=dist.ReduceOp.AVG, group=elastic_device_mesh.local_pg)
 
             # syncing loss across all data parallel rank within a nodes
 

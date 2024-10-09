@@ -6,10 +6,22 @@ micro_bs = 1
 ac_ckpt = true
 
 [optim]
-batch_size = 256 #2M tokens bs
+batch_size = 128 #1M tokens bs
 warmup_steps = 1000
 total_steps = 88_000
-lr = 3e-4
+lr = 7.5e-5
+
+adam_betas1 = 0.9
+adam_betas2 = 0.95
+weight_decay = 0.1
 
 [data]
 seq_length = 8192
+dataset_name_or_paths = "PrimeIntellect/fineweb-edu,PrimeIntellect/fineweb,PrimeIntellect/StackV1-popular,mlfoundations/dclm-baseline-1.0-parquet,open-web-math/open-web-math"
+dataset_ratio = "55:10:20:10:5"
+
+[diloco]
+inner_steps = 100
+compression = "uint8"
+
+

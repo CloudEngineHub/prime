@@ -1,7 +1,9 @@
 from torch import Tensor
+import torch
 import torch.nn.functional as F
 
 
+@torch.compile
 def cross_entropy_max_z_loss(
     logits: Tensor,
     targets: Tensor,

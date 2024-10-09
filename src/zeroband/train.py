@@ -218,6 +218,7 @@ def train(config: Config):
         sched_type=config.optim.sched_type,
         optimizer=inner_optimizer,
         num_warmup_steps=config.optim.warmup_steps,
+        num_stable_steps=config.optim.stable_steps,
         num_training_steps=config.optim.total_steps,
     )
 

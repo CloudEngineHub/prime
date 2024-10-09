@@ -45,5 +45,8 @@ SCHED_MAP = {
     "linear": get_linear_schedule_with_warmup
 }
 
-def get_scheduler(sched_type: str, **kwargs):
-    return SCHED_MAP[sched_type](**kwargs)
+def get_scheduler(sched_type: str, optimizer, num_warmup_steps: int, num_stable_steps: int, num_training_steps: int):
+    if 'wsd' in sched_type:
+        return SCHED_MAP[sched_type](optimizer, num_warmup_steps=num_warmup_steps, num_stable_steps=num_stable_steps, num_training_steps=num_training_steps)
+    else:
+        return SCHED_MAP[sched_type](optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)

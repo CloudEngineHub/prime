@@ -80,6 +80,8 @@ class Diloco:
         self._logger.debug("sync pseudo gradient")
         global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
 
+        times = []
+        numels = 0
         for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
             if param.shape[0] == 0:
                 continue
@@ -87,9 +89,13 @@ class Diloco:
 
             # gloo does not support AVG
             param_offloaded.grad = param_offloaded.grad / global_pg.size()
-
+            numels += param.grad.numel()
+            time_start = time.perf_counter()
             all_reduce(self.config.compression, param_offloaded.grad, dist.ReduceOp.SUM, global_pg)
-            # todo async here
+            times.append(time.perf_counter() - time_start)
+
+        self._logger.info(f"all reduce pseudo gradient in: {sum(times)} seconds. numels: {numels}")
+        # todo async here
 
     def sync_inner_model(self, model: nn.Module):
         """

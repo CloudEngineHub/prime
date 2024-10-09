@@ -249,12 +249,24 @@ class ElasticDeviceMesh:
                 last_heartbeat = float(self.global_store.get(f"heartbeat_{i}").decode("utf-8"))
                 if current_time - last_heartbeat > HEARTBEAT_TIMEOUT:
                     dead_nodes.append(i)
+                    # TODO: This is to avoid cascading death when two maybe_reinit_global_pg
+                    # happen very close to each other. The deathrattle of the leaving node
+                    # becomes invalid after the node is removed but the node that replaces it
+                    # might not have set its heartbeat yet. The dirty value is read
+                    # and the replacing node is killed incorrectly.
+                    self.global_store.set(f"heartbeat_{i}", str(current_time))
             except dist.DistStoreError:
                 self._logger.warning(f"Node {i} has no heartbeat")
         return dead_nodes
 
-    def _resolve_world(self, admit_joiners: bool = False):
-        """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing."""
+    def _resolve_world(self, admit_joiners: bool = False) -> bool:
+        """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing.
+        
+        Args:
+            admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
+        Returns:
+            bool: True if the world was changed, False otherwise.
+        """
         # Find joiners
         if admit_joiners:
             joiners = self._get_joiners()
@@ -267,7 +279,7 @@ class ElasticDeviceMesh:
 
         # If no joiners or dead nodes, no resolution needed
         if len(joiners) == 0 and len(dead_nodes) == 0:
-            return
+            return False
 
         # Remap live ranks to smaller world_size caused by dead nodes
         leaving_ranks = set(dead_nodes)
@@ -286,6 +298,7 @@ class ElasticDeviceMesh:
         self.global_store.set("mesh_count", str(self.mesh_count + 1))
         # Set status to "reinit"
         self.global_store.set("status", "reinit")
+        return True
 
     def maybe_reinit_global_pg(self, admit_joiners: bool = False) -> bool:
         """Reinitialize the global_pg if there are is a state change.
@@ -357,6 +370,7 @@ class ElasticDeviceMesh:
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
+        return True
 
     def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:
         """Get the global process group. If maybe_reinit is True, reinitialize the global process group if needed."""

@@ -90,7 +90,9 @@ class Diloco:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.time()
                 all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
-                self._logger.info(f"All reduce takes {time.time() - _collective_start_time:.6f} seconds")
+                self._logger.info(
+                    f"All reduce takes {time.time() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
+                )
                 break
             except RuntimeError as e:
                 self._logger.error(f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}")

@@ -186,7 +186,9 @@ class CkptManager:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
             shutil.rmtree(self.shm_path, ignore_errors=True)
             os.makedirs(self.shm_path, exist_ok=True)
-            self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=self.shm_path)
+            
+            serve_path = os.path.join(SHM_PATH, self.world_info.global_unique_id)
+            self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=serve_path)
         else:
             self.shm_path = None
 
@@ -367,13 +369,13 @@ class CkptManager:
 
             dest_rank = 0
 
-            self._logger.info(f"Started downloading ckpt from http://{address}/diloco_{dest_rank}")
+            self._logger.info(f"Started downloading ckpt from http://{address}/latest/diloco_{dest_rank}")
             wget(
-                source=f"http://{address}/diloco_{dest_rank}",
+                source=f"http://{address}/latest/diloco_{dest_rank}",
                 destination=path,
             )
             wget(
-                source=f"http://{address}/diloco_{dest_rank}/.metadata",
+                source=f"http://{address}/latest/diloco_{dest_rank}/.metadata",
                 destination=path,
             )
             self._logger.info(

@@ -89,7 +89,7 @@ def test_squence_packing():
             return len(self.data)
 
         def __getitem__(self, index):
-            return self.data[index]
+            return {'input_ids': self.data[index]}
 
     MAX_SEQ_LEN = 8
     dataset = SequencePackingDataSet(FakeDataset(), max_seq_length=MAX_SEQ_LEN, eos_token=0)

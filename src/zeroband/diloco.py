@@ -116,13 +116,15 @@ class Diloco:
         """
         Offload the model parameters to cpu
         """
+        numels = sum(param.numel() for param in model.parameters() if param.requires_grad)
+        self.offloaded_grad_flat_tensor = torch.zeros((numels,), device="cpu", dtype=torch.float32)
+        current_offset = 0
         offloaded_params = []
 
         for param in model.parameters():
             if param.requires_grad:
                 # so here we copy the DTensor from gpu to cpu. The trick is that we need to recreate the DTensor with the correct
                 # cpu devise mesh, otherwise we have a cpu DTensor with a cuda device mesh which will fail to do any communication
-
                 offloaded_param = nn.Parameter(
                     DTensor.from_local(
                         param.data.to_local().detach().to("cpu"),
@@ -130,8 +132,15 @@ class Diloco:
                         placements=param.data.placements,
                     )
                 )
+
+                grad_tensor = self.offloaded_grad_flat_tensor.as_strided(
+                    offloaded_param.to_local().size(),
+                    offloaded_param.to_local().stride(),
+                    current_offset,
+                )
+                current_offset += grad_tensor.numel()
                 offloaded_param.grad = DTensor.from_local(
-                    torch.zeros_like(param.data.to_local()),
+                    grad_tensor,
                     device_mesh=self.elastic_device_mesh.cpu_local_mesh,
                     placements=param.data.placements,
                 )

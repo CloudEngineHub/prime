@@ -98,8 +98,9 @@ class Diloco:
             try:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.time()
-                for tensor_group in self._offloaded_grad_grouped_tensor:
-                    all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
+                all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
+                #for tensor_group in self._offloaded_grad_grouped_tensor:
+                #    all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                 self._logger.debug(
                     f"All reduce takes {time.time() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
                 )
@@ -127,7 +128,7 @@ class Diloco:
         numels = sum(param.to_local().numel() for _, param in param_items)
 
         self.offloaded_data_flat_tensor = torch.empty((numels,), device="cpu", dtype=torch.float32)
-        self.offloaded_grad_flat_tensor = torch.empty((numels,), device="cpu", dtype=torch.float32)
+        self.offloaded_grad_flat_tensor = torch.zeros((numels,), device="cpu", dtype=torch.float32)
         current_offset = 0
         offloaded_params = []
         param_group_cutoff = []
@@ -144,6 +145,7 @@ class Diloco:
             data_tensor = self.offloaded_data_flat_tensor.as_strided(target.size(), target.stride(), current_offset)
             grad_tensor = self.offloaded_grad_flat_tensor.as_strided(target.size(), target.stride(), current_offset)
             current_offset += data_tensor.numel()
+            data_tensor.copy_(target)
 
             offloaded_param = nn.Parameter(
                 DTensor.from_local(

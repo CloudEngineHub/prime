@@ -320,11 +320,6 @@ def train(config: Config):
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
         time_start_outer = time.perf_counter()
-        for _inner_step in range(num_inner_steps):
-            loss_batch = 0
-            if config.optim.z_loss:
-                z_loss_batch = 0
-
         elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
         # at the beginning of the inner steps we allow joiner to arrive.
         # We maybe reinit before the all reduce but only to allow leaving, not to join anymore
@@ -334,6 +329,8 @@ def train(config: Config):
 
         for inner_step in range(num_inner_steps):
             loss_batch = 0
+            z_loss_batch = 0
+
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
                 # no sync if we are accumulating gradients

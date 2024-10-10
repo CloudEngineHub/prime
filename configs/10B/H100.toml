@@ -6,9 +6,10 @@ micro_bs = 1
 ac_ckpt = true
 
 [optim]
+sched_type = "wsd-sqrt"
 batch_size = 128 #1M tokens bs
 warmup_steps = 1000
-total_steps = 88_000
+total_steps = 1_000_000_000_000
 lr = 7.5e-5
 
 adam_betas1 = 0.9

@@ -86,7 +86,7 @@ class Diloco:
         Sync the pseudo gradient from the local process group to the global process group
         """
         _start_time = time.time()
-        self._logger.debug("sync pseudo gradient" + " fake" if fake else "")
+        self._logger.debug("sync pseudo gradient %s", " fake" if fake else "")
 
         self.elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=False)
         global_pg = self.elastic_device_mesh.global_pg
@@ -100,16 +100,29 @@ class Diloco:
             try:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.time()
-                all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
-                # for tensor_group in self._offloaded_grad_grouped_tensor:
-                #    all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
+
+                self._logger.debug("Beginning all reduce")
+                # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
+                for tensor_group in self._offloaded_grad_grouped_tensor:
+                    all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                 self._logger.debug(
                     f"All reduce takes {time.time() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
                 )
                 break
-            except RuntimeError as e:
+            except Exception as e:
                 self._logger.error(f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}")
                 global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+        else:
+            self._logger.error(
+                "Failed to sync pseudo gradient after %d retries. Resorting to calculating pseudo-gradient without reduce",
+                self.config.retry_all_reduce,
+            )
+            for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+                if fake:
+                    param_offloaded.grad.to_local().zero_()
+                else:
+                    param_offloaded.grad.to_local().copy_(param_offloaded.data.to_local())
+                    param_offloaded.grad.to_local().sub_(param.data.to_local().to(param_offloaded.data.device))
 
         self._logger.info(f"Sync psuedo-gradient in {time.time() - _start_time:.6f} seconds")
 

@@ -168,6 +168,7 @@ class ElasticDeviceMesh:
             self.world_info.global_world_size = int(self.global_store.get("world_size").decode("utf-8"))
             self.mesh_count = int(self.global_store.get("mesh_count").decode("utf-8"))
             prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
+            self._logger.debug(f"Created prefix store with mesh_{self.mesh_count}")
             self.live_recovery.need_live_recovery = self.live_recovery.enable
         else:
             # TODO: Could be in "reinit" status. We probably just recurse until running in this case
@@ -222,8 +223,10 @@ class ElasticDeviceMesh:
         """Send a heartbeat to the global store."""
         current_time = time.time()
         try:
+            self._logger.debug(f"Sending heartbeat at {current_time} to {self.world_info.global_rank}")
             self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
         except Exception:
+            self._logger.error("Error sending heartbeat", exc_info=True)
             pass
 
     def _send_deathrattle(self):
@@ -242,6 +245,7 @@ class ElasticDeviceMesh:
         for i in range(self.world_info.global_world_size):
             try:
                 last_heartbeat = float(self.global_store.get(f"heartbeat_{i}").decode("utf-8"))
+                self._logger.debug(f"Node {i} last heartbeat: {last_heartbeat}")
                 if current_time - last_heartbeat > HEARTBEAT_TIMEOUT:
                     dead_nodes.append(i)
                     # TODO: This is to avoid cascading death when two maybe_reinit_global_pg
@@ -346,6 +350,7 @@ class ElasticDeviceMesh:
             f"New global rank: {self.world_info.global_rank}, New global world size: {self.world_info.global_world_size} New mesh count: {self.mesh_count}"
         )
         prefix_store = dist.PrefixStore(f"mesh_{self.mesh_count}", self.global_store)
+        self._logger.debug(f"Created prefix store with mesh_{self.mesh_count}")
 
         # Create process group
         try:

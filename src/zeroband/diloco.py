@@ -19,13 +19,15 @@ class DilocoConfig(BaseConfig):
 
     retry_all_reduce: int = 3
 
+
 @lru_cache(maxsize=None)
 def _find_first_number(s: str) -> int:
-    match = re.search(r'\d+', s)
+    match = re.search(r"\d+", s)
     if match:
         return int(match.group())
     else:
         return -1
+
 
 class Diloco:
     """
@@ -99,7 +101,7 @@ class Diloco:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.time()
                 self._logger.debug("Beginning all reduce")
-                #all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
+                # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
                 for tensor_group in self._offloaded_grad_grouped_tensor:
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                 self._logger.debug(
@@ -109,6 +111,17 @@ class Diloco:
             except Exception as e:
                 self._logger.error(f"Error syncing pseudo gradient: {e}, retry {i+1}/{self.config.retry_all_reduce}")
                 global_pg = self.elastic_device_mesh.get_global_pg(maybe_reinit=True)
+        else:
+            self._logger.error(
+                "Failed to sync pseudo gradient after %d retries. Resorting to calculating pseudo-gradient without reduce",
+                self.config.retry_all_reduce,
+            )
+            for param_offloaded, param in zip(self.param_list_cpu, model.parameters()):
+                if fake:
+                    param_offloaded.grad.to_local().zero_()
+                else:
+                    param_offloaded.grad.to_local().copy_(param_offloaded.data.to_local())
+                    param_offloaded.grad.to_local().sub_(param.data.to_local().to(param_offloaded.data.device))
 
         self._logger.info(f"Sync psuedo-gradient in {time.time() - _start_time:.6f} seconds")
 
@@ -168,8 +181,13 @@ class Diloco:
         param_group_cutoff.append(current_offset)
         self._logger.debug(f"Cutoffs: {param_group_cutoff}")
 
-        self._offloaded_grad_grouped_tensor = [self.offloaded_grad_flat_tensor.as_strided((j - i,), (1,), i) for i, j in zip(param_group_cutoff, param_group_cutoff[1:])]
-        self._logger.debug(f"Grouped Tensors({len(self._offloaded_grad_grouped_tensor)}){[i.numel() for i in self._offloaded_grad_grouped_tensor]}")
+        self._offloaded_grad_grouped_tensor = [
+            self.offloaded_grad_flat_tensor.as_strided((j - i,), (1,), i)
+            for i, j in zip(param_group_cutoff, param_group_cutoff[1:])
+        ]
+        self._logger.debug(
+            f"Grouped Tensors({len(self._offloaded_grad_grouped_tensor)}){[i.numel() for i in self._offloaded_grad_grouped_tensor]}"
+        )
         return offloaded_params
 
     def step(self, model: nn.Module, fake: bool = False):

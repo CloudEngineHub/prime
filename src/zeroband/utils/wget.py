@@ -3,7 +3,6 @@ import os
 import subprocess
 
 import shutil
-from zeroband.utils.logging import get_logger
 
 from zeroband.utils.world_info import get_world_info
 
@@ -35,7 +34,6 @@ def wget(source: str, destination: str):
     files = [".metadata"]
 
     world_info = get_world_info()
-    logger = get_logger()
     for i in range(world_info.local_world_size):
         files.extend([f"__{i}_0.distcp", f"__{i}_0.pt"])
 
@@ -43,7 +41,6 @@ def wget(source: str, destination: str):
     for file in files:
         src = f"{source}/{file}"
         dst = os.path.join(destination, file)
-        logger.debug(f"Downloading {src} to {dst}")
         process = multiprocessing.Process(target=_wget, args=(src, dst))
         process.start()
         processes.append(process)

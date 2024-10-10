@@ -471,7 +471,7 @@ def train(config: Config):
         if config.monitor is not None:
             monitor.finish()
 
-    ckpt_manager.wait_async_save_process()
+    ckpt_manager.wait_for_blocking_job()
 
     del elastic_device_mesh  # allow to clean up for smoother tests transition
 

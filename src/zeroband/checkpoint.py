@@ -210,7 +210,8 @@ class CkptManager:
         self._logger = get_logger()
         self.world_info = get_world_info()
 
-        self.async_save_process: list[multiprocessing.Process] = []
+        self.non_blockng_process: list[multiprocessing.Process] = []
+        self.blocking_process: list[multiprocessing.Process] = []
 
         if self.config.live_recovery:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
@@ -299,20 +300,23 @@ class CkptManager:
             self._save(step_ckpt_path)
 
             if self.world_info.local_rank == 0:
-                self._async_save_remote(step_ckpt_path, remote_ckpt_path)
+                self.non_blockng_process.append(self._async_save_remote(step_ckpt_path, remote_ckpt_path))
 
         else:
             # if we are in self recovery mode the ckpt is already in shm and we just copy
             if self.world_info.local_rank == 0:
-                self._async_save_remote(self.shm_path, step_ckpt_path)
-                if self.config.remote_path is not None:
-                    self._async_save_remote(self.shm_path, remote_ckpt_path)
+                self.blocking_process.append(self._async_save_remote(self.shm_path, step_ckpt_path))
+                # if self.config.remote_path is not None:
+                #     self._async_save_remote(self.shm_path, remote_ckpt_path)
 
         if self.world_info.local_rank == 0:
             if self.config.topk is not None:
                 delete_topk(self.config.path, self.config.topk)
 
     def _save(self, ckpt_path: str):
+
+        self.wait_for_blocking_job()
+
         if self.diloco_offloaded_optimizer:
             # here we save model and offloaded optimizer on each diloco rank even tho they are the same
             # this is done for two reasons:
@@ -340,7 +344,7 @@ class CkptManager:
 
         gc.collect()
 
-    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str):
+    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str) -> multiprocessing.Process:
         """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
         specific libraries (e.g. s3fs).
         """
@@ -349,24 +353,36 @@ class CkptManager:
             time_start = time.perf_counter()
             self._logger.info(f"start pushing {ckpt_path} to {remote_ckpt_path} asynchronously")
             try:
+                time.sleep(10)
                 rsync_fsspec(ckpt_path, destination=remote_ckpt_path)
             except Exception as e:
                 self._logger.error(f"Error pushing {ckpt_path} to {remote_ckpt_path}: {e}")
             self._logger.info(
                 f"finish pushing {ckpt_path} to {remote_ckpt_path} in {time.perf_counter() - time_start} seconds"
             )
-
+    
         processes = multiprocessing.Process(target=rsync, daemon=True)
         processes.start()
 
-        self.async_save_process.append(processes)
+        return processes
+
+        # self.async_save_process.append(processes)
+
+    def wait_for_blocking_job(self):
+        for process in self.blocking_process:
+            process.join()
+        
+        self.blocking_process = []
 
     def wait_async_save_process(self):
         """
         wait for all async save process to finish
         """
-        for process in self.async_save_process:
+        for process in self.blocking_process:
             process.join()
+
+        # for process in self.non_blockng_process:
+        #     process.join()
 
     def _del__(self):
         if self.live_server is not None:

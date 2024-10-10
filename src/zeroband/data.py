@@ -207,8 +207,8 @@ def _load_datasets(
             _ds_args["data_files"] = _data_files[data_rank::data_world_size]
         ds_args.append(_ds_args)
 
-    logger.debug(f"Datasets ({split}):\n" + "\n".join(map(_nice_print, ds_args)))
-    logger.debug(f"Probabilities: {probabilities}")
+    # logger.debug(f"Datasets ({split}):\n" + "\n".join(map(_nice_print, ds_args)))
+    # logger.debug(f"Probabilities: {probabilities}")
     logger.debug(f"Loading datasets{' in streaming mode' if streaming else ''}")
     datasets = []
     for ds_arg in ds_args:

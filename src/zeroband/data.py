@@ -212,7 +212,7 @@ def _load_datasets(
     logger.debug(f"Loading datasets{' in streaming mode' if streaming else ''}")
     datasets = []
     for ds_arg in ds_args:
-        logger.debug(f"Loading dataset: {ds_arg}")
+        # logger.debug(f"Loading dataset: {ds_arg}")
         _ds = load_dataset(**ds_arg, split=split, streaming=streaming)
         _ds = _ds.remove_columns([i for i in _ds.column_names if i not in ["text"]])
         datasets.append(_ds)

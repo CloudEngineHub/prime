@@ -370,6 +370,14 @@ class ElasticDeviceMesh:
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
+        
+        # TODO: We need to reset the self.world_info.global_rank reference
+        # Somehow the reference becomes stale and the heartbeats become wrong
+        # This will be fixed when heartbeats become unique id dependent which never changes
+        self._logger.debug("Reset Heartbet")
+        self._stop_heartbeat()
+        self._start_heartbeat()
+        self._logger.debug("Reset Heartbeat done")
         return True
 
     def get_global_pg(self, maybe_reinit: bool = False) -> dist.ProcessGroup:

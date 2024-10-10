@@ -428,7 +428,7 @@ class CkptManager:
     def download_and_load_ckpt_from_peers(self, address: str):
         time_start = time.perf_counter()
         ckpt_path = f"/dev/shm/zeroband_reco/node_{self.world_info.global_rank}"
-        path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
+        path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}/")
 
         if self.world_info.local_rank == 0:
             # only local rank download the ckpt
@@ -440,7 +440,7 @@ class CkptManager:
 
             self._logger.info(f"Started downloading ckpt from http://{address}/latest/diloco_{dest_rank} to {path}")
             wget(
-                source=f"http://{address}/latest/diloco_{dest_rank}/",
+                source=f"http://{address}/latest/diloco_{dest_rank}",
                 destination=path,
             )
             self._logger.info(

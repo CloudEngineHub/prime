@@ -39,9 +39,7 @@ def wget(source: str, destination: str):
 
     processes = []
     for file in files:
-        process = multiprocessing.Process(
-            target=_wget, args=(os.path.join(source, file), os.path.join(destination, file))
-        )
+        process = multiprocessing.Process(target=_wget, args=(f"{source}/{file}", os.path.join(destination, file)))
         process.start()
         processes.append(process)
 

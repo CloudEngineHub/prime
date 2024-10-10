@@ -12,8 +12,8 @@ def _get_cut_dirs_from_url(url: str) -> int:
 
 
 def _wget(source: str, destination: str) -> None:
-    # logger = get_logger()
-    cmd = f"wget -r -np -nH -P 16 --cut-dirs={_get_cut_dirs_from_url(source)} -P {destination} {source}"
+    logger = multiprocessing.get_logger()
+    cmd = f"wget -P {destination} {source}"
 
     if shutil.which("wget") is None:
         raise RuntimeError("wget is required but not found. Please install wget and try again.")
@@ -21,8 +21,8 @@ def _wget(source: str, destination: str) -> None:
     try:
         subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        # logger.error(f"Error output: {e.stderr}")
-        print(f"Error output: {e.stderr}")
+        logger.error(f"Error output: {e.stderr}")
+        # print(f"Error output: {e.stderr}")
         raise e
 
 

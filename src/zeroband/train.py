@@ -443,7 +443,9 @@ def train(config: Config):
             and training_progress.step % config.ckpt.interval == 0
         ):
             # we only allow to checkpoint after a outer step. For non diloco training outer step = 1 anyway
-            ckpt_manager.save()
+
+            do_remote = config.ckpt.remote is not None and training_progress.step % config.ckpt.remote.interval == 0
+            ckpt_manager.save(remote=do_remote)
 
         if config.diloco:
             tokens_per_second = (

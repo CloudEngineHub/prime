@@ -301,7 +301,9 @@ class CkptManager:
 
         if not self.config.live_recovery:
             # if we are not in self recovery mode we save to disk
+            time_start = time.perf_counter()
             self._save(step_ckpt_path)
+            self._logger.info(f"Saved checkpoint to {step_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         else:
             # if we are in self recovery mode the ckpt is already in shm and we just copy

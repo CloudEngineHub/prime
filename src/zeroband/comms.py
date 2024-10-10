@@ -223,7 +223,6 @@ class ElasticDeviceMesh:
         """Send a heartbeat to the global store."""
         current_time = time.time()
         try:
-            self._logger.debug(f"Sending heartbeat at {current_time} to {self.world_info.global_rank}")
             self.global_store.set(f"heartbeat_{self.world_info.global_rank}", str(current_time))
         except Exception:
             self._logger.error("Error sending heartbeat", exc_info=True)

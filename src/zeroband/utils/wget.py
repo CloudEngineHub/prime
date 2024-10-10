@@ -33,9 +33,6 @@ def wget(source: str, destination: str):
 
     files = [".metadata"]
 
-    def dd(file):
-        _wget(source + file, os.path.join(destination, file))
-
     world_info = get_world_info()
     for i in range(world_info.local_world_size):
         files.extend([f"__{i}_0.distcp", f"__{i}_0.pt"])

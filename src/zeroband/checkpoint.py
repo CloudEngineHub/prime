@@ -440,7 +440,7 @@ class CkptManager:
 
             self._logger.info(f"Started downloading ckpt from http://{address}/latest/diloco_{dest_rank} to {path}")
             wget(
-                source=f"http://{address}/latest/diloco_{dest_rank}",
+                source=f"http://{address}/latest/diloco_{dest_rank}/",
                 destination=path,
             )
             self._logger.info(

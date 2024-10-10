@@ -24,6 +24,3 @@ topk = 3
 live_recovery = true
 path = "outputs_1b_diloco_50"
 
-[ckpt.remote]
-interval = 100
-path = "gs://checkpoints_pi/1b_test/"

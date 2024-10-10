@@ -183,7 +183,7 @@ class ElasticDeviceMesh:
             prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
         )
         self.global_pg._set_default_timeout(GLOBAL_PG_TIMEOUT)
-        self._logger.debug(f"Global pg created with {self.global_pg.size()} peers")
+        self._logger.debug("Global pg created with %d peers. Timeout of %s", self.global_pg.size(), GLOBAL_PG_TIMEOUT)
 
         # Update global store values
         if self._global_leader:

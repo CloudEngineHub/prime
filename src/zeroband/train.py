@@ -423,7 +423,9 @@ def train(config: Config):
             if world_info.rank == 0 and config.monitor is not None:
                 monitor.set_stage("outer_loop")
 
+            time_start_inner = time.perf_counter()
             diloco.step(model)
+            diloco_time = time.perf_counter() - time_start_inner
 
             if config.train.log_model_hash:
                 logger.debug("Post diloco model: %s", get_module_signature(model))
@@ -456,6 +458,17 @@ def train(config: Config):
             )
             mfu = 100 * num_flop_per_token * tokens_per_second / gpu_peak_flops / world_info.local_world_size
             logger.info(f"effective mfu: {mfu}")
+
+            if world_info.rank == 0:
+                metric_logger.log(
+                    {
+                        "outer_mfu": mfu,
+                        "step": training_progress.step,
+                        "outer_step": training_progress.outer_step,
+                        "outer_tokens_per_second": tokens_per_second,
+                        "all_reduce_step": diloco_time,
+                    }
+                )
 
         if config.train.memory_monitor:
             logger.info(f"outer step peak gpu stats: {gpu_mem_monitor.format_peak_states()}")

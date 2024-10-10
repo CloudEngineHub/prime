@@ -443,10 +443,6 @@ class CkptManager:
                 source=f"http://{address}/latest/diloco_{dest_rank}",
                 destination=path,
             )
-            wget(
-                source=f"http://{address}/latest/diloco_{dest_rank}/.metadata",
-                destination=path,
-            )
             self._logger.info(
                 f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
             )

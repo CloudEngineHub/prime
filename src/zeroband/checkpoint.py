@@ -313,7 +313,8 @@ class CkptManager:
         # push to remote
         if self.world_info.local_rank == 0:
             if remote and self.config.remote is not None:
-                self._async_save_remote(self.shm_path, remote_ckpt_path)
+                ckpt_path = self.shm_path if self.config.live_recovery else step_ckpt_path
+                self._async_save_remote(ckpt_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
         self.wait_for_blocking_job()

@@ -304,7 +304,7 @@ class ElasticDeviceMesh:
             self.global_store.set(f"rank_{joiner_id}", str(new_world_size))
             new_world_size += 1
 
-        for i in range(new_world_size):
+        for i in range(1, new_world_size):
             self.global_store.set(f"barrier_{i}", "null")
         # Update world_size
         self.global_store.set("world_size", str(new_world_size))
@@ -427,6 +427,7 @@ class ElasticDeviceMesh:
         else:
             self.global_store.set(f"barrier_{self.world_info.global_rank}", flag)
             while (ans := self.global_store.get("barrier_0").decode("utf-8")) != flag:
+                self._logger.debug(ans)
                 if ans == "error":
                     raise RuntimeError("Monitored barrier failed due to error")
                 # TODO: Have a timeout here in case the leader is dead

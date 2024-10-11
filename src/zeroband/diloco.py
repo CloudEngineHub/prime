@@ -185,15 +185,15 @@ class Diloco:
             offloaded_params.append(offloaded_param)
 
         param_group_cutoff.append(current_offset)
-        self._logger.debug(f"Cutoffs: {param_group_cutoff}")
+        # self._logger.debug(f"Cutoffs: {param_group_cutoff}")
 
         self._offloaded_grad_grouped_tensor = [
             self.offloaded_grad_flat_tensor.as_strided((j - i,), (1,), i)
             for i, j in zip(param_group_cutoff, param_group_cutoff[1:])
         ]
-        self._logger.debug(
-            f"Grouped Tensors({len(self._offloaded_grad_grouped_tensor)}){[i.numel() for i in self._offloaded_grad_grouped_tensor]}"
-        )
+        # self._logger.debug(
+        #     f"Grouped Tensors({len(self._offloaded_grad_grouped_tensor)}){[i.numel() for i in self._offloaded_grad_grouped_tensor]}"
+        # )
         return offloaded_params
 
     def step(self, model: nn.Module, fake: bool = False):

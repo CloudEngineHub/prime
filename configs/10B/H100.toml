@@ -22,13 +22,14 @@ z_loss = true
 seq_length = 8192
 dataset_name_or_paths = "PrimeIntellect/fineweb-edu,PrimeIntellect/fineweb,PrimeIntellect/StackV1-popular,mlfoundations/dclm-baseline-1.0-parquet,open-web-math/open-web-math"
 dataset_ratio = "55:10:20:10:5"
+num_workers = 8
 
 [diloco]
 inner_steps = 100
 compression = "uint8"
 
 [ckpt]
-interval = 500
+interval = 100
 topk = 40
 live_recovery = true
 path = "outputs_10B_zero_band"

@@ -85,7 +85,7 @@ class Diloco:
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
-        _start_time = time.perf_count()
+        _start_time = time.perf_counter()
         self._logger.debug("sync pseudo gradient %s", " fake" if fake else "")
 
         self.elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=False)
@@ -99,20 +99,20 @@ class Diloco:
                     param_offloaded.grad.to_local().sub_(param.data.to_local().to(param_offloaded.data.device))
             try:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
-                _collective_start_time = time.perf_count()
+                _collective_start_time = time.perf_counter()
 
                 self._logger.debug("Beginning all reduce")
                 global_pg.monitored_barrier()
                 # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
                 for j, tensor_group in enumerate(self._offloaded_grad_grouped_tensor):
-                    t0 = time.perf_count()
+                    t0 = time.perf_coperf_counterunt()
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                     print(
-                        f"{j}/{len(self._offloaded_grad_grouped_tensor)} all reduce bucket done in {time.perf_count() - t0:.6f} seconds"
+                        f"{j}/{len(self._offloaded_grad_grouped_tensor)} all reduce bucket done in {time.perf_counter() - t0:.6f} seconds"
                     )
 
                 self._logger.debug(
-                    f"All reduce takes {time.perf_count() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
+                    f"All reduce takes {time.perf_counter() - _collective_start_time:.6f} seconds numels: {self.offloaded_grad_flat_tensor.numel()}"
                 )
                 break
             except Exception as e:

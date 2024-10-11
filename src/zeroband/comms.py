@@ -201,6 +201,8 @@ class ElasticDeviceMesh:
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )
 
+        self._evicted_nodes = []
+
     def _start_heartbeat(self):
         """Start sending heartbeats to the global store in a separate process."""
         self._heartbeat_stop_event = mp.Event()
@@ -277,7 +279,14 @@ class ElasticDeviceMesh:
 
         # Check for dead nodes
         dead_nodes = self._check_heartbeats()
-        self._logger.debug(f"Joiners ({'' if admit_joiners else 'not '}admitting): {joiners}, Dead nodes: {dead_nodes}")
+        self._logger.debug(
+            "Joiners (%sadmitting): %s, Dead nodes: %s, Evicting nodes: %s",
+            "" if admit_joiners else "not ",
+            joiners,
+            dead_nodes,
+            self._evicted_nodes,
+        )
+        dead_nodes.extend(self._evicted_nodes)
 
         # If no joiners or dead nodes, no resolution needed
         if len(joiners) == 0 and len(dead_nodes) == 0:
@@ -336,11 +345,12 @@ class ElasticDeviceMesh:
 
         # Reinit Path
         self._logger.info("Reinitializing global_pg")
-        if sys.getrefcount(self.global_pg) > 2:
-            self._logger.warning(
-                f"Global PG refcount was {sys.getrefcount(self.global_pg)} when 2 is expected during deletion. This may cause a memory leak."
-            )
-        del self.global_pg  # TODO(jackmin): Where do we catch errors in teardown?
+        if hasattr(self, "global_pg"):
+            if sys.getrefcount(self.global_pg) > 2:
+                self._logger.warning(
+                    f"Global PG refcount was {sys.getrefcount(self.global_pg)} when 2 is expected during deletion. This may cause a memory leak."
+                )
+            del self.global_pg  # TODO(jackmin): Where do we catch errors in teardown?
         self._logger.info("Destroyed process group")
 
         # Check if we got remapped
@@ -403,7 +413,14 @@ class ElasticDeviceMesh:
             ):
                 if time.perf_counter() - time_start > GLOBAL_PG_TIMEOUT.total_seconds():
                     self._logger.error("Monitored barrier failed due to timeout")
+                    self._evicted_nodes = [
+                        i
+                        for i in range(1, self.world_info.global_world_size)
+                        if self.global_store.get(f"barrier_{i}").decode("utf-8") != flag
+                    ]
+                    self._logger.info("Evicting nodes: %s", self._evicted_nodes)
                     self.global_store.set(f"barrier_{self.world_info.global_rank}", "error")
+                    # We neeed to evict the dead node
                     raise RuntimeError("Monitored barrier failed due to timeout")
                 time.sleep(TCPSTORE_POLLING_INTERVAL)
             self.global_store.set(f"barrier_{self.world_info.global_rank}", flag)
@@ -412,7 +429,6 @@ class ElasticDeviceMesh:
             while (ans := self.global_store.get("barrier_0").decode("utf-8")) != flag:
                 if ans == "error":
                     raise RuntimeError("Monitored barrier failed due to error")
-                self._logger.debug(ans)
                 # TODO: Have a timeout here in case the leader is dead
                 time.sleep(TCPSTORE_POLLING_INTERVAL)
 

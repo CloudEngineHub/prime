@@ -156,6 +156,8 @@ class CkptConfig(BaseConfig):
 
     live_recovery: bool = False
     live_recovery_rank_src: int = 0
+    
+    live_recovery_path: str | None = None
 
     @model_validator(mode="after")
     def validate_path_and_interval(self):

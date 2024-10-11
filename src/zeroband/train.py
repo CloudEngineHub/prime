@@ -250,9 +250,13 @@ def train(config: Config):
             logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
-        ckpt_manager.download_and_load_ckpt_from_peers(
-            elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
-        )
+        if config.ckpt.live_recovery_path is not None:
+            ckpt_manager.download_and_load_ckpt_from_peers(
+                elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
+            )
+        else:
+            ckpt_manager.load(resume_ckpt_path=config.ckpt.live_recovery_path, skip_dataloader=True)
+
         elastic_device_mesh.live_recovery.need_live_recovery = False
         training_progress.step += config.diloco.inner_steps
 

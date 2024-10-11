@@ -105,9 +105,9 @@ class Diloco:
                 global_pg.monitored_barrier()
                 # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
                 for j, tensor_group in enumerate(self._offloaded_grad_grouped_tensor):
-                    t0 = time.perf_coperf_counterunt()
+                    t0 = time.perf_counter()
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
-                    print(
+                    self._logger.debug(
                         f"{j}/{len(self._offloaded_grad_grouped_tensor)} all reduce bucket done in {time.perf_counter() - t0:.6f} seconds"
                     )
 
@@ -130,7 +130,7 @@ class Diloco:
                     param_offloaded.grad.to_local().copy_(param_offloaded.data.to_local())
                     param_offloaded.grad.to_local().sub_(param.data.to_local().to(param_offloaded.data.device))
 
-        self._logger.info(f"Sync psuedo-gradient in {time.perf_count() - _start_time:.6f} seconds")
+        self._logger.info(f"Sync psuedo-gradient in {time.perf_counter() - _start_time:.6f} seconds")
 
     def sync_inner_model(self, model: nn.Module):
         """

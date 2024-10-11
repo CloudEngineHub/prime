@@ -102,7 +102,6 @@ class Diloco:
                 _collective_start_time = time.time()
 
                 self._logger.debug("Beginning all reduce")
-                global_pg.monitored_barrier()
                 # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
                 for tensor_group in self._offloaded_grad_grouped_tensor:
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)

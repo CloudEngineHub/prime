@@ -13,7 +13,6 @@ import multiprocessing as mp
 
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
-GLOBAL_PG_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_PG_TIMEOUT_SECONDS", "600")))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 HEARTBEAT_INTERVAL = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_INTERVAL_SECONDS", "2")
@@ -179,11 +178,10 @@ class ElasticDeviceMesh:
         self._logger.debug(
             f"Creating global pg with {self.world_info.global_world_size} rank {self.world_info.global_rank}"
         )
-        self.global_pg: dist.ProcessGroupGloo = dist.ProcessGroupGloo(
+        self.global_pg = dist.ProcessGroupGloo(
             prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
         )
-        self.global_pg._set_default_timeout(GLOBAL_PG_TIMEOUT)
-        self._logger.debug("Global pg created with %d peers. Timeout of %s", self.global_pg.size(), GLOBAL_PG_TIMEOUT)
+        self._logger.debug(f"Global pg created with {self.global_pg.size()} peers")
 
         # Update global store values
         if self._global_leader:
@@ -261,7 +259,7 @@ class ElasticDeviceMesh:
 
     def _resolve_world(self, admit_joiners: bool = False) -> bool:
         """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing.
-
+        
         Args:
             admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
         Returns:
@@ -302,7 +300,7 @@ class ElasticDeviceMesh:
 
     def maybe_reinit_global_pg(self, admit_joiners: bool = False) -> bool:
         """Reinitialize the global_pg if there are is a state change.
-
+        
         Args:
             admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
         Returns:
@@ -336,7 +334,7 @@ class ElasticDeviceMesh:
             self._logger.warning(
                 f"Global PG refcount was {sys.getrefcount(self.global_pg)} when 2 is expected during deletion. This may cause a memory leak."
             )
-        del self.global_pg  # TODO(jackmin): Where do we catch errors in teardown?
+        del self.global_pg # TODO(jackmin): Where do we catch errors in teardown?
         self._logger.info("Destroyed process group")
 
         # Check if we got remapped
@@ -355,10 +353,9 @@ class ElasticDeviceMesh:
 
         # Create process group
         try:
-            self.global_pg: dist.ProcessGroupGloo = dist.ProcessGroupGloo(
+            self.global_pg = dist.ProcessGroupGloo(
                 prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
             )
-            self.global_pg._set_default_timeout(GLOBAL_PG_TIMEOUT)
             self._logger.debug("Successfully recreated process group")
         except Exception as e:
             self._logger.error(f"Error recreating process group: {e}. Retrying...")
@@ -372,7 +369,7 @@ class ElasticDeviceMesh:
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
-
+        
         # TODO: We need to reset the self.world_info.global_rank reference
         # Somehow the reference becomes stale and the heartbeats become wrong
         # This will be fixed when heartbeats become unique id dependent which never changes

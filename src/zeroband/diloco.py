@@ -108,7 +108,7 @@ class Diloco:
                     t0 = time.perf_counter()
                     all_reduce(self.config.compression, tensor_group, dist.ReduceOp.SUM, global_pg)
                     self._logger.debug(
-                        f"{j}/{len(self._offloaded_grad_grouped_tensor)} all reduce bucket done in {time.perf_counter() - t0:.6f} seconds"
+                        f"{j}/{len(self._offloaded_grad_grouped_tensor)} all reduce bucket done in {time.perf_counter() - t0:.6f} seconds, numel: {tensor_group.numel()}"
                     )
 
                 self._logger.debug(

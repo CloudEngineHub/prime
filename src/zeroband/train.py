@@ -259,7 +259,7 @@ def train(config: Config):
         if config.train.log_model_hash:
             logger.debug("Pre diloco model: %s", get_module_signature(model))
 
-        diloco.step(model, fake=True)
+        diloco.step(model, fake=True, flag=training_progress.outer_step)
 
         if config.train.log_model_hash:
             logger.debug("Post diloco model: %s", get_module_signature(model))
@@ -424,7 +424,7 @@ def train(config: Config):
                 monitor.set_stage("outer_loop")
 
             time_start_inner = time.perf_counter()
-            diloco.step(model)
+            diloco.step(model, flag=training_progress.outer_step)
             diloco_time = time.perf_counter() - time_start_inner
 
             if config.train.log_model_hash:

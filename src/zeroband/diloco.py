@@ -81,7 +81,7 @@ class Diloco:
         )
         self._logger.debug("offload model to cpu")
 
-    def sync_pseudo_gradient(self, model: nn.Module, fake: bool = False):
+    def sync_pseudo_gradient(self, model: nn.Module, fake: bool = False, flag: str = "outer"):
         """
         Sync the pseudo gradient from the local process group to the global process group
         """
@@ -100,6 +100,8 @@ class Diloco:
             try:
                 self.offloaded_grad_flat_tensor.div_(global_pg.size())
                 _collective_start_time = time.perf_counter()
+                self._logger.debug("Waiting on barrier")
+                self.elastic_device_mesh.monitored_barrier(flag)
 
                 self._logger.debug("Beginning all reduce")
                 # all_reduce(self.config.compression, self.offloaded_grad_flat_tensor, dist.ReduceOp.SUM, global_pg)
@@ -196,12 +198,12 @@ class Diloco:
         )
         return offloaded_params
 
-    def step(self, model: nn.Module, fake: bool = False):
+    def step(self, model: nn.Module, fake: bool = False, flag: str = "outer"):
         """
         Step the optimizer
         """
         time_start = time.perf_counter()
-        self.sync_pseudo_gradient(model, fake=fake)
+        self.sync_pseudo_gradient(model, fake=fake, flag=flag)
         self._logger.info(f"all reduce pseudo gradient in: {time.perf_counter() - time_start} seconds")
 
         if self.outer_optimizer is not None:

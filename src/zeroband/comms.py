@@ -10,9 +10,11 @@ from datetime import timedelta
 from typing import List, Tuple, Optional
 from torch.testing._internal.distributed.fake_pg import FakeProcessGroup
 import multiprocessing as mp
+from uuid import uuid4
 
 TCPSTORE_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_STORE_TIMEOUT_SECONDS", "300")))
 TCPSTORE_POLLING_INTERVAL = float(os.getenv("ZERO_BAND_GLOBAL_STORE_POLLING_INTERVAL_SECONDS", "0.1"))
+GLOBAL_PG_TIMEOUT = timedelta(seconds=int(os.getenv("ZERO_BAND_GLOBAL_PG_TIMEOUT_SECONDS", "600")))
 MAX_JOINERS = 100  # Maximum number of nodes that can join in a single reinit
 HEARTBEAT_INTERVAL = int(
     os.getenv("ZERO_BAND_EDM_HEARTBEAT_INTERVAL_SECONDS", "2")
@@ -181,12 +183,14 @@ class ElasticDeviceMesh:
         self.global_pg = dist.ProcessGroupGloo(
             prefix_store, self.world_info.global_rank, self.world_info.global_world_size, TCPSTORE_TIMEOUT
         )
-        self._logger.debug(f"Global pg created with {self.global_pg.size()} peers")
+        self._logger.debug("Global pg created with %d peers. Timeout of %s", self.global_pg.size(), GLOBAL_PG_TIMEOUT)
 
         # Update global store values
         if self._global_leader:
             self.global_store.set("status", "running")
-            self.global_store.set("resolved_time", str(time.time()))
+            self.global_store.set("resolved_time", uuid4().hex)
+            for i in range(self.world_info.global_world_size):
+                self.global_store.set(f"barrier_{i}", "null")
         self.global_status = "running"
         self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
 
@@ -259,7 +263,7 @@ class ElasticDeviceMesh:
 
     def _resolve_world(self, admit_joiners: bool = False) -> bool:
         """Set the new world size and ranks for all nodes if there are joiners or dead nodes. Else, do nothing.
-        
+
         Args:
             admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
         Returns:
@@ -291,6 +295,8 @@ class ElasticDeviceMesh:
             self.global_store.set(f"rank_{joiner_id}", str(new_world_size))
             new_world_size += 1
 
+        for i in range(new_world_size):
+            self.global_store.set(f"barrier_{i}", "null")
         # Update world_size
         self.global_store.set("world_size", str(new_world_size))
         self.global_store.set("mesh_count", str(self.mesh_count + 1))
@@ -300,7 +306,7 @@ class ElasticDeviceMesh:
 
     def maybe_reinit_global_pg(self, admit_joiners: bool = False) -> bool:
         """Reinitialize the global_pg if there are is a state change.
-        
+
         Args:
             admit_joiners (bool, optional): Whether to admit joiners. Defaults to False.
         Returns:
@@ -315,7 +321,7 @@ class ElasticDeviceMesh:
         self._logger.debug("[%s] Resolving world", self.world_info.global_unique_id)
         if self._global_leader:
             self._resolve_world(admit_joiners=admit_joiners)
-            self.global_store.set("resolved_time", str(time.time()))
+            self.global_store.set("resolved_time", uuid4().hex)
         else:
             while (ans := self.global_store.get("resolved_time").decode("utf-8")) == self._last_resolved_time:
                 # TODO: Have a timeout here in case the leader is dead
@@ -334,7 +340,7 @@ class ElasticDeviceMesh:
             self._logger.warning(
                 f"Global PG refcount was {sys.getrefcount(self.global_pg)} when 2 is expected during deletion. This may cause a memory leak."
             )
-        del self.global_pg # TODO(jackmin): Where do we catch errors in teardown?
+        del self.global_pg  # TODO(jackmin): Where do we catch errors in teardown?
         self._logger.info("Destroyed process group")
 
         # Check if we got remapped
@@ -369,7 +375,7 @@ class ElasticDeviceMesh:
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
-        
+
         # TODO: We need to reset the self.world_info.global_rank reference
         # Somehow the reference becomes stale and the heartbeats become wrong
         # This will be fixed when heartbeats become unique id dependent which never changes
@@ -384,6 +390,33 @@ class ElasticDeviceMesh:
         if maybe_reinit:
             self.maybe_reinit_global_pg()
         return self.global_pg
+
+    def monitored_barrier(self, flag: str):
+        flag = str(flag)
+        time_start = time.perf_counter()
+        self._logger.debug("[%s] Monitored Barrier %s", self.world_info.global_unique_id, flag)
+        if self._global_leader:
+            self._logger.debug("Others have %d seconds to resolve", GLOBAL_PG_TIMEOUT.total_seconds())
+            while not all(
+                self.global_store.get(f"barrier_{i}").decode("utf-8") == flag
+                for i in range(1, self.world_info.global_world_size)
+            ):
+                if time.perf_counter() - time_start > GLOBAL_PG_TIMEOUT.total_seconds():
+                    self._logger.error("Monitored barrier failed due to timeout")
+                    self.global_store.set(f"barrier_{self.world_info.global_rank}", "error")
+                    raise RuntimeError("Monitored barrier failed due to timeout")
+                time.sleep(TCPSTORE_POLLING_INTERVAL)
+            self.global_store.set(f"barrier_{self.world_info.global_rank}", flag)
+        else:
+            self.global_store.set(f"barrier_{self.world_info.global_rank}", flag)
+            while (ans := self.global_store.get("barrier_0").decode("utf-8")) != flag:
+                if ans == "error":
+                    raise RuntimeError("Monitored barrier failed due to error")
+                self._logger.debug(ans)
+                # TODO: Have a timeout here in case the leader is dead
+                time.sleep(TCPSTORE_POLLING_INTERVAL)
+
+        self._logger.debug("Monitored barrier resolved in %s seconds", time.perf_counter() - time_start)
 
 
 class LiveRecovery:

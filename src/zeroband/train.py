@@ -456,7 +456,7 @@ def train(config: Config):
                 logger.debug("Post saved optimizer: %s", get_optimizer_signature(inner_optimizer))
 
                 if config.diloco is not None:
-                    logger.debug("Post saved outer model: %s", get_tensor_list_signature(diloco.outer_optimizer.param_list))
+                    logger.debug("Post saved outer model: %s", get_tensor_list_signature(diloco.param_list_cpu))
                     logger.debug("optimizer hash: %s", get_optimizer_signature(diloco.outer_optimizer))
          
 

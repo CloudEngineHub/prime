@@ -248,6 +248,7 @@ def train(config: Config):
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume, skip_dataloader=config.ckpt.load_dataloader)
         if config.train.log_model_hash:
             logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+            logger.info(f"model hash: {get_module_signature(model)}")
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers(
@@ -298,7 +299,9 @@ def train(config: Config):
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
         time_start_outer = time.perf_counter()
-        elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+        
+        if config.diloco is not None:
+            elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
         # at the beginning of the inner steps we allow joiner to arrive.
         # We maybe reinit before the all reduce but only to allow leaving, not to join anymore
 

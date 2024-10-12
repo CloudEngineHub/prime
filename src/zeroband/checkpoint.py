@@ -4,7 +4,7 @@ import multiprocessing
 import os
 import shutil
 import time
-from typing import Any
+from typing import Any, Literal
 import uuid
 import fsspec
 from fsspec.generic import rsync as rsync_fsspec
@@ -156,6 +156,8 @@ class CkptConfig(BaseConfig):
 
     live_recovery: bool = False
     live_recovery_rank_src: int = 0
+
+    data_version: Literal["v1", "v2"] = "v1"
 
     @model_validator(mode="after")
     def validate_path_and_interval(self):
@@ -336,13 +338,25 @@ class CkptManager:
 
             dcp.save(self.states, checkpoint_id=ckpt_path)
 
+
+            ## we have two formats to to save the dataloader:
+            ## 1. v1: save the dataloader in the same file as the outer optimizer
+            ## 2. v2: save the dataloader in a data folder inside the ckpt path
+
             ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
             with open(os.path.join(ckpt_path, f"__{self.world_info.local_rank}_0.pt"), "wb") as f:
-                state = {"data_loader": self.dataloader.state_dict()}
+                state = {"data_loader": self.dataloader.state_dict()} if self.config.data_version == "v1" else {}
                 if self.diloco_offloaded_optimizer:
                     state["optimizer"] = OuterOptimizerWrapper(self.diloco_offloaded_optimizer).state_dict()
 
                 torch.save(state, f)
+
+            if self.config.data_version == "v2":
+                data_path = os.path.join(ckpt_path, "data")
+                os.makedirs(data_path, exist_ok=True)
+                with open(os.path.join(data_path, f"_{self.world_info.local_rank}.pt"), "wb") as f:
+                    state = {"data_loader": self.dataloader.state_dict()}
+                    torch.save(state, f)
 
         gc.collect()
 
@@ -415,7 +429,14 @@ class CkptManager:
             rank_state_dict = torch.load(f)
 
         if not skip_dataloader:
-            self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+            if "data_loader" in rank_state_dict.keys():
+                if self.config.data_version == "v1":
+                    self._logger.warning("v1 data tis set but we are loading a v2 ckpt")
+                
+                self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+            else:
+                with open(os.path.join(resume_ckpt_path, "data", f"_{world_info.local_rank}.pt"), "rb") as f:
+                    self.dataloader.load_state_dict(torch.load(f))
 
         if self.diloco_offloaded_optimizer:
             opt_wrapper = OuterOptimizerWrapper(self.diloco_offloaded_optimizer)

@@ -157,7 +157,7 @@ class CkptConfig(BaseConfig):
     live_recovery: bool = False
     live_recovery_rank_src: int = 0
 
-    data_version: Literal["v1", "v2"] = "v1"
+    data_version: Literal["v1", "v2"] = "v2"
     data_path: str | None = None
 
     @model_validator(mode="after")

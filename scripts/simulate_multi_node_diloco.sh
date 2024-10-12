@@ -53,7 +53,7 @@ trap cleanup SIGINT
 mkdir -p logs
 
 export GLOBAL_ADDR=localhost
-export GLOBAL_PORT=${GLOBAL_PORT:-1234}
+export GLOBAL_PORT=${GLOBAL_PORT:-5565}
 export GLOBAL_WORLD_SIZE=$N
 export BASE_PORT=${BASE_PORT:-10001}
 

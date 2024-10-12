@@ -1,0 +1,135 @@
+from typing import Iterable, Optional
+import torch
+from torch.distributed.checkpoint.stateful import Stateful
+from torch.distributed._tensor.api import DTensor
+from zeroband.utils.logging import get_logger
+import logging
+from pathlib import Path
+import multiprocessing as mp
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+
+def _is_path(path_or_url: str) -> bool:
+    return not path_or_url.startswith("liveckpt://")
+
+
+def _to_local_if_dtensor(t: torch.Tensor) -> torch.Tensor:
+    if isinstance(t, DTensor):
+        return t.to_local()
+    return t
+
+
+class SimpleCkptManager:
+    """Save order: Urgents -> Non Tensors -> Tensors
+    We assume that all init args are by reference and not by value.
+    Order of tensors matters for now as we do not save in fqn format.
+
+    Args:
+        tensors (Iterable[torch.Tensor]): List of tensors to be saved. Tensors can also be DTensors.
+        non_tensors (Iterable[Stateful]): List of non-tensors to be saved
+        urgents (Iterable[Stateful]): List of urgents to be saved
+    """
+
+    def __init__(
+        self,
+        tensors: Iterable[torch.Tensor],
+        non_tensors: Iterable[Stateful],
+        urgents: Iterable[Stateful],
+    ):
+        self._logger = get_logger(__name__)
+        self._disk_job_queue = []
+        self._remote_job_queue = []
+
+        self._tensors = list(tensors)
+        self._non_tensors = list(non_tensors)
+        self._urgents = list(urgents)
+
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._debug_log_states()  # This is expensive, hence the check
+
+    def _debug_log_states(self):
+        from zeroband.utils import get_tensor_signature
+        from hashlib import md5
+
+        self._logger.debug(
+            "[Observing states for ckpt] Num tensors: %d, Num non-tensors: %d, Num urgents: %d",
+            len(self._tensors),
+            len(self._non_tensors),
+            len(self._urgents),
+        )
+        tensor_sigs = [get_tensor_signature(t, full_dtensor=False) for t in self._tensors]
+        compressed_tensor_sigs = md5(str(tensor_sigs).encode("utf-8")).hexdigest()
+        self._logger.debug("All-tensors signature: %s", compressed_tensor_sigs)
+        self._logger.debug(
+            "All non-tensor signatures: %s",
+            [md5(str(n.state_dict()).encode("utf-8")).hexdigest() for n in self._non_tensors],
+        )
+        self._logger.debug(
+            "All urgent signatures: %s", [md5(str(u.state_dict()).encode("utf-8")).hexdigest() for u in self._urgents]
+        )
+
+    def load(self, path_or_url: str, rank: int = 0):
+        if _is_path(path_or_url):
+            self._load_from_disk(path_or_url, rank)
+        else:
+            # Load from remote
+            pass
+
+    def test_path(self, disk_path: Optional[str] = None, remote_path: Optional[str] = None):
+        if disk_path is not None:
+            Path(disk_path).mkdir(parents=True, exist_ok=True)
+        if remote_path is not None:
+            pass
+
+    def save(self, disk_path: Optional[str] = None, remote_path: Optional[str] = None, rank: int = 0):
+        """The save will occur at the path.
+        Please specify a unique path for each ckpt, otherwise it will overwrite the previous ckpt.
+        """
+        self._logger.info("Saving to disk: [%s], remote: [%s]", disk_path, remote_path)
+        if disk_path is not None:
+            disk_proc = mp.Process(target=self._save_to_disk, args=(disk_path, rank))
+            disk_proc.start()
+            self._disk_job_queue.append(disk_proc)
+        if remote_path is not None:
+            pass
+
+    def _save_to_disk(self, disk_path: str, rank: int):
+        _disk_path = Path(disk_path)
+        _disk_path.mkdir(parents=True, exist_ok=True)
+        # TODO: You probably want some packing here but for now we will save them as is
+        for i, stateful in enumerate(self._urgents):
+            torch.save(stateful.state_dict(), _disk_path / f"__{rank}_{i}_urgent.pt")
+        for i, stateful in enumerate(self._non_tensors):
+            torch.save(stateful.state_dict(), _disk_path / f"__{rank}_{i}_non_tensor.pt")
+        for i, tensor in enumerate(self._tensors):
+            _tensors = {"tensor": _to_local_if_dtensor(tensor)}
+            save_file(_tensors, str(_disk_path / f"__{rank}_{i}.safetensors"))
+
+    @torch.no_grad
+    def _load_from_disk(self, disk_path: str, rank: int):
+        _disk_path = Path(disk_path)
+        for i, stateful in enumerate(self._urgents):
+            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_urgent.pt")
+            stateful.load_state_dict(_state_dict)
+        for i, stateful in enumerate(self._non_tensors):
+            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_non_tensor.pt")
+            stateful.load_state_dict(_state_dict)
+        for i, tensor in enumerate(self._tensors):
+            _tensors = {}
+            with safe_open(_disk_path / f"__{rank}_{i}.safetensors") as f:
+                for key in f.keys():
+                    _tensors[key] = f[key]
+            _to_local_if_dtensor(tensor).copy_(_tensors["tensor"])
+
+    def wait_for_all_jobs(self):
+        pass
+
+    def wait_for_disk_jobs(self):
+        pass
+
+    def wait_for_urgent_disk_jobs(self):
+        pass
+
+    def wait_for_non_tensor_disk_jobs(self):
+        pass

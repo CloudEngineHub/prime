@@ -212,8 +212,6 @@ class CkptManager:
         # which might make the ckpt less generic in term of loading from different number of device. FSDP ckpt seems to be a mess tho
         self.diloco_offloaded_param_list = diloco_offloaded_param_list
 
-        self._init_state()
-
         self._logger = get_logger()
         self.world_info = get_world_info()
 
@@ -254,20 +252,15 @@ class CkptManager:
             self._logger.error(f"Error checking path access {ckpt_path}: {e}, aborting training")
             raise e
 
-    def _init_state(self):
+    def _get_states(self) -> dict[str, Stateful]:
         # states can only be stateful object, hence we need to wrap Model and Optimizer
-        self.states: dict[str, Stateful] = {
+        return {
             "model": ModelWrapper(self.model),
             "optimizer": OptimizerWrapper(self.model, self.optimizer),
             "scheduler": self.scheduler,
             # "dataloader": self.dataloader, # ignoring dataloader for now as each rank has its own dataloader
             "training_progress": self.training_progress,
         }
-
-        # if self.diloco_offloaded_optimizer is not None:
-        #     # even if the diloco_offloaded target the cpu list model, we still use the gpu model to load and save state.
-        #     # main reason is that we actually don't a cpu model but just a list of cpu parameters.
-        #     self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
     def save_shm(self) -> None:
         """
@@ -336,7 +329,8 @@ class CkptManager:
             if catch_warning:
                 warnings.simplefilter("ignore")
 
-            dcp.save(self.states, checkpoint_id=ckpt_path)
+            states = self._get_states()
+            dcp.save(states, checkpoint_id=ckpt_path)
 
             ## we have two formats to to save the dataloader:
             ## 1. v1: save the dataloader in the same file as the outer optimizer
@@ -415,7 +409,8 @@ class CkptManager:
             rank = diloco_rank if diloco_rank is not None else world_info.diloco_rank
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{rank}")
 
-        dcp.load(self.states, checkpoint_id=resume_ckpt_path)
+        states = self._get_states()
+        dcp.load(states, checkpoint_id=resume_ckpt_path)
 
         self._logger.debug("sync inner model")
         # todo(refactor): here we should rather let the diloco class handle this logic
@@ -439,8 +434,6 @@ class CkptManager:
         if self.diloco_offloaded_optimizer:
             opt_wrapper = OuterOptimizerWrapper(self.diloco_offloaded_optimizer)
             opt_wrapper.load_state_dict(rank_state_dict["optimizer"])
-
-        self._init_state()
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 

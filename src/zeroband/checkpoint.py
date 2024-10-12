@@ -152,12 +152,13 @@ class CkptConfig(BaseConfig):
 
     resume: str | None = None
 
-    load_dataloader: bool = True
+    skip_dataloader: bool = False
 
     live_recovery: bool = False
     live_recovery_rank_src: int = 0
 
     data_version: Literal["v1", "v2"] = "v1"
+    data_path: str | None = None
 
     @model_validator(mode="after")
     def validate_path_and_interval(self):
@@ -396,7 +397,42 @@ class CkptManager:
             self.live_server.stop()
         self.wait_for_blocking_job()
 
-    def load(self, resume_ckpt_path: str, diloco_rank: int | None = None, skip_dataloader: bool = False) -> None:
+    def _load_data(self, resume_ckpt_path: str):
+        ## we have two formats to to save the dataloader:
+        ## 1. v1: save the dataloader in the same file as the outer optimizer
+        ## 2. v2: save the dataloader in a data folder inside the ckpt path
+        world_info = get_world_info()
+
+        if self.config.data_version == "v2":
+            self._logger.debug(f"data_path{resume_ckpt_path}")
+            data_path = os.path.join(resume_ckpt_path, "data")
+
+            if os.path.exists(os.path.join(data_path, f"_{world_info.local_rank}.pt")):
+                with open(os.path.join(data_path, f"_{world_info.local_rank}.pt"), "rb") as f:
+                    state = torch.load(f)
+                    self.dataloader.load_state_dict(state["data_loader"])
+                return
+            else:
+                self._logger.debug(f"Data version is v2 but data folder {data_path} does not exist. trying v1 loading")
+
+        with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
+            rank_state_dict = torch.load(f)
+
+        try:
+            self.dataloader.load_state_dict(rank_state_dict["data_loader"])
+        except KeyError as e:
+            self._logger.warning(
+                "Data_loader state_dict is not found. You probably are loading a v2 ckpt with v1 dataloader. Aborting"
+            )
+            raise e
+
+    def load(
+        self,
+        resume_ckpt_path: str,
+        diloco_rank: int | None = None,
+        skip_dataloader: bool = False,
+        data_path: str | None = None,
+    ) -> None:
         """
         loading should be done after fsdp wrap and optimizer init.
         Each rank will load the right shard of the model and optimizer.
@@ -414,6 +450,8 @@ class CkptManager:
         if self.diloco_offloaded_param_list is not None:
             rank = diloco_rank if diloco_rank is not None else world_info.diloco_rank
             resume_ckpt_path = os.path.join(resume_ckpt_path, f"diloco_{rank}")
+            if data_path is not None:
+                data_path = os.path.join(data_path, f"diloco_{rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)
 
@@ -422,23 +460,16 @@ class CkptManager:
         for param_offloaded, param in zip(self.diloco_offloaded_param_list, self.model.parameters()):
             param_offloaded.data.to_local().copy_(param.data.to_local())
 
-        ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
-        with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
-            rank_state_dict = torch.load(f)
-
-        if not skip_dataloader:
-            if "data_loader" in rank_state_dict.keys():
-                if self.config.data_version == "v2":
-                    self._logger.warning("v2 data tis set but we are loading a v1 ckpt")
-
-                self.dataloader.load_state_dict(rank_state_dict["data_loader"])
-            else:
-                with open(os.path.join(resume_ckpt_path, "data", f"_{world_info.local_rank}.pt"), "rb") as f:
-                    self.dataloader.load_state_dict(torch.load(f))
-
         if self.diloco_offloaded_optimizer:
+            with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:
+                rank_state_dict = torch.load(f)
+
             opt_wrapper = OuterOptimizerWrapper(self.diloco_offloaded_optimizer)
             opt_wrapper.load_state_dict(rank_state_dict["optimizer"])
+
+        if not skip_dataloader:
+            data_path = resume_ckpt_path if data_path is None else data_path
+            self._load_data(data_path)
 
         self._init_state()
 

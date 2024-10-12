@@ -23,6 +23,7 @@ from zeroband.utils import (
     PerfCounter,
     get_module_signature,
     get_optimizer_signature,
+    get_tensor_list_signature,
 )
 from zeroband.utils.activation_ckpt import apply_ac_ckpt
 from zeroband.data import TEST_VOCAB_SIZE, get_dataloader, DataConfig
@@ -158,10 +159,6 @@ def train(config: Config):
         attn_fn=config.train.attn_fn,
     )
 
-    if config.train.log_model_hash:
-        # Compute SHA256 hash
-        logger.info(f"Model hash: {get_module_signature(model)}")
-
     model = model.to(world_info.local_rank)
     logger.debug("model loaded")
 
@@ -247,9 +244,12 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume, skip_dataloader=config.ckpt.load_dataloader)
         if config.train.log_model_hash:
-            if config.diloco is not None:
-                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
             logger.info(f"model hash: {get_module_signature(model)}")
+            logger.info(f"optimizer hash: {get_optimizer_signature(inner_optimizer)}")
+
+            if config.diloco is not None:
+                logger.info(f"outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+                logger.info(f"outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
         ckpt_manager.download_and_load_ckpt_from_peers(
@@ -432,10 +432,9 @@ def train(config: Config):
             diloco_time = time.perf_counter() - time_start_inner
 
             if config.train.log_model_hash:
-                logger.debug("Post diloco model: %s", get_module_signature(model))
-
-            if config.train.log_model_hash:
-                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+                logger.debug("inner diloco model: %s", get_module_signature(model))
+                logger.debug(f"inner diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+                logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
         training_progress.outer_step += 1
 
@@ -453,8 +452,12 @@ def train(config: Config):
             do_remote = config.ckpt.remote is not None and training_progress.step % config.ckpt.remote.interval == 0
             ckpt_manager.save(remote=do_remote)
             if config.train.log_model_hash:
-                logger.debug("Pre diloco model: %s", get_module_signature(model))
-                # logger.debug("optimizer hash: %s", get_optimizer_signature(diloco.outer_optimizer))
+                logger.debug("Post saved model: %s", get_module_signature(model))
+                logger.debug("Post saved optimizer: %s", get_optimizer_signature(inner_optimizer))
+
+                if config.diloco is not None:
+                    logger.debug("Post saved outer model: %s", get_tensor_list_signature(diloco.outer_optimizer.param_list))
+                    logger.debug("optimizer hash: %s", get_optimizer_signature(diloco.outer_optimizer))
          
 
         if config.diloco:

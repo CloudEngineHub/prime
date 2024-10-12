@@ -56,6 +56,7 @@ class ElasticDeviceMesh:
         if self.world_info.global_world_size > 1:
             self._init_global_pg()
 
+
         # Initialize local process group
         dist.init_process_group(backend=backend)
         self.mesh = init_device_mesh(
@@ -66,7 +67,6 @@ class ElasticDeviceMesh:
         self.local_pg = self.mesh.get_group("intranode")
 
         # Start heartbeat
-        self._start_heartbeat()
 
         self.cuda_local_mesh = init_device_mesh("cuda", mesh_shape=(self.local_pg.size(),))
         self.cpu_local_mesh = init_device_mesh("cpu", mesh_shape=(self.local_pg.size(),))
@@ -134,9 +134,12 @@ class ElasticDeviceMesh:
     def _init_global_pg(self) -> None:
         # Each rank gets its own global store with global rank 0 as the master
         time_start = time.perf_counter()
+        
         self._logger.info(
             f"[{self.world_info.global_unique_id}] Elastic Device mesh init: Looking for peers via {self.world_info.global_addr}:{self.world_info.global_port}"
         )
+
+
         self._global_leader = self.world_info.global_rank == 0
         self.global_store = dist.TCPStore(
             host_name=self.world_info.global_addr,
@@ -193,6 +196,9 @@ class ElasticDeviceMesh:
         self.live_recovery.init_live_endpoint(self.global_store)
 
         self._last_resolved_time = self.global_store.get("resolved_time").decode("utf-8")
+
+        self._start_heartbeat()
+
         self._logger.info(
             f"Elastic Device mesh init done with {self.global_pg.size()} peers in {time.perf_counter() - time_start} seconds"
         )

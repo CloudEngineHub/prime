@@ -45,15 +45,13 @@ class SimpleCkptManager:
         self._non_tensors = list(non_tensors)
         self._urgents = list(urgents)
 
-        if self._logger.isEnabledFor(logging.DEBUG):
-            self._debug_log_states()  # This is expensive, hence the check
-
-    def _debug_log_states(self):
+    def _log_debug_states(self, msg: str = "Observing states for ckpt"):
         from zeroband.utils import get_tensor_signature
         from hashlib import md5
 
         self._logger.debug(
-            "[Observing states for ckpt] Num tensors: %d, Num non-tensors: %d, Num urgents: %d",
+            "[%s] Num tensors: %d, Num non-tensors: %d, Num urgents: %d",
+            msg,
             len(self._tensors),
             len(self._non_tensors),
             len(self._urgents),
@@ -69,24 +67,28 @@ class SimpleCkptManager:
             "All urgent signatures: %s", [md5(str(u.state_dict()).encode("utf-8")).hexdigest() for u in self._urgents]
         )
 
-    def load(self, path_or_url: str, rank: int = 0):
-        if _is_path(path_or_url):
-            self._load_from_disk(path_or_url, rank)
-        else:
-            # Load from remote
-            pass
-
     def test_path(self, disk_path: Optional[str] = None, remote_path: Optional[str] = None):
         if disk_path is not None:
             Path(disk_path).mkdir(parents=True, exist_ok=True)
         if remote_path is not None:
             pass
 
-    def save(self, disk_path: Optional[str] = None, remote_path: Optional[str] = None, rank: int = 0):
+    def load(self, rank: int, path_or_url: str):
+        if _is_path(path_or_url):
+            self._load_from_disk(path_or_url, rank)
+        else:
+            # Load from remote
+            pass
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._log_debug_states("After loading")
+
+    def save(self, rank: int, disk_path: Optional[str] = None, remote_path: Optional[str] = None):
         """The save will occur at the path.
         Please specify a unique path for each ckpt, otherwise it will overwrite the previous ckpt.
         """
         self._logger.info("Saving to disk: [%s], remote: [%s]", disk_path, remote_path)
+        if self._logger.isEnabledFor(logging.DEBUG):
+            self._log_debug_states("Saving")
         if disk_path is not None:
             disk_proc = mp.Process(target=self._save_to_disk, args=(disk_path, rank))
             disk_proc.start()
@@ -110,20 +112,23 @@ class SimpleCkptManager:
     def _load_from_disk(self, disk_path: str, rank: int):
         _disk_path = Path(disk_path)
         for i, stateful in enumerate(self._urgents):
-            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_urgent.pt")
+            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_urgent.pt", weights_only=True)
             stateful.load_state_dict(_state_dict)
         for i, stateful in enumerate(self._non_tensors):
-            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_non_tensor.pt")
+            _state_dict = torch.load(_disk_path / f"__{rank}_{i}_non_tensor.pt", weights_only=True)
             stateful.load_state_dict(_state_dict)
         for i, tensor in enumerate(self._tensors):
             _tensors = {}
-            with safe_open(_disk_path / f"__{rank}_{i}.safetensors") as f:
+            with safe_open(_disk_path / f"__{rank}_{i}.safetensors", framework="pt", device="cpu") as f:
                 for key in f.keys():
-                    _tensors[key] = f[key]
+                    _tensors[key] = f.get_tensor(key)
             _to_local_if_dtensor(tensor).copy_(_tensors["tensor"])
 
     def wait_for_all_jobs(self):
-        pass
+        for disk_proc in self._disk_job_queue:
+            disk_proc.join()
+        for remote_proc in self._remote_job_queue:
+            remote_proc.join()
 
     def wait_for_disk_jobs(self):
         pass

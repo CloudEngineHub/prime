@@ -407,8 +407,9 @@ class CkptManager:
 
         self._logger.debug("sync inner model")
         # todo(refactor): here we should rather let the diloco class handle this logic
-        for param_offloaded, param in zip(self.diloco_offloaded_param_list, self.model.parameters()):
-            param_offloaded.data.to_local().copy_(param.data.to_local())
+        if self.diloco_offloaded_param_list is not None:
+            for param_offloaded, param in zip(self.diloco_offloaded_param_list, self.model.parameters()):
+                param_offloaded.data.to_local().copy_(param.data.to_local())
 
         ## the next part is a fix so that each rank save a different dataloader rank. It not efficient because it reads the state two times from disk
         with open(os.path.join(resume_ckpt_path, f"__{world_info.local_rank}_0.pt"), "rb") as f:

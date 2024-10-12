@@ -247,7 +247,8 @@ def train(config: Config):
         # all is inplace
         ckpt_manager.load(resume_ckpt_path=config.ckpt.resume, skip_dataloader=config.ckpt.load_dataloader)
         if config.train.log_model_hash:
-            logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+            if config.diloco is not None:
+                logger.info(f"optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
             logger.info(f"model hash: {get_module_signature(model)}")
 
     if elastic_device_mesh.live_recovery.need_live_recovery:
@@ -451,6 +452,10 @@ def train(config: Config):
 
             do_remote = config.ckpt.remote is not None and training_progress.step % config.ckpt.remote.interval == 0
             ckpt_manager.save(remote=do_remote)
+            if config.train.log_model_hash:
+                logger.debug("Pre diloco model: %s", get_module_signature(model))
+                # logger.debug("optimizer hash: %s", get_optimizer_signature(diloco.outer_optimizer))
+         
 
         if config.diloco:
             tokens_per_second = (

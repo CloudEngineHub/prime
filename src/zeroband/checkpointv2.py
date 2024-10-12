@@ -1,4 +1,4 @@
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List
 import torch
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor.api import DTensor
@@ -6,6 +6,7 @@ from zeroband.utils.logging import get_logger
 import logging
 from pathlib import Path
 import multiprocessing as mp
+from multiprocessing.synchronize import Event as EventType
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -38,8 +39,10 @@ class SimpleCkptManager:
         urgents: Iterable[Stateful],
     ):
         self._logger = get_logger(__name__)
-        self._disk_job_queue = []
-        self._remote_job_queue = []
+        self._disk_job_queue: List[mp.Process] = []
+        self._remote_job_queue: List[mp.Process] = []
+        self._urgents_disk_completion_queue: List[EventType] = []
+        self._non_tensors_disk_completion_queue: List[EventType] = []
 
         self._tensors = list(tensors)
         self._non_tensors = list(non_tensors)
@@ -96,14 +99,24 @@ class SimpleCkptManager:
         if remote_path is not None:
             pass
 
-    def _save_to_disk(self, disk_path: str, rank: int):
+    def _save_to_disk(
+        self,
+        disk_path: str,
+        rank: int,
+        urgent_event: Optional[EventType] = None,
+        non_tensor_event: Optional[EventType] = None,
+    ):
         _disk_path = Path(disk_path)
         _disk_path.mkdir(parents=True, exist_ok=True)
         # TODO: You probably want some packing here but for now we will save them as is
         for i, stateful in enumerate(self._urgents):
             torch.save(stateful.state_dict(), _disk_path / f"__{rank}_{i}_urgent.pt")
+            if urgent_event is not None:
+                urgent_event.set()
         for i, stateful in enumerate(self._non_tensors):
             torch.save(stateful.state_dict(), _disk_path / f"__{rank}_{i}_non_tensor.pt")
+            if non_tensor_event is not None:
+                non_tensor_event.set()
         for i, tensor in enumerate(self._tensors):
             _tensors = {"tensor": _to_local_if_dtensor(tensor)}
             save_file(_tensors, str(_disk_path / f"__{rank}_{i}.safetensors"))
@@ -125,16 +138,23 @@ class SimpleCkptManager:
             _to_local_if_dtensor(tensor).copy_(_tensors["tensor"])
 
     def wait_for_all_jobs(self):
-        for disk_proc in self._disk_job_queue:
-            disk_proc.join()
-        for remote_proc in self._remote_job_queue:
-            remote_proc.join()
+        self.wait_for_disk_jobs()
+        self.wait_for_remote_jobs()
 
     def wait_for_disk_jobs(self):
-        pass
+        for disk_proc in self._disk_job_queue:
+            disk_proc.join()
+        self._disk_job_queue.clear()
+
+    def wait_for_remote_jobs(self):
+        for remote_proc in self._remote_job_queue:
+            remote_proc.join()
+        self._remote_job_queue.clear()
 
     def wait_for_urgent_disk_jobs(self):
-        pass
+        for event in self._urgents_disk_completion_queue:
+            event.wait()
 
     def wait_for_non_tensor_disk_jobs(self):
-        pass
+        for event in self._non_tensors_disk_completion_queue:
+            event.wait()

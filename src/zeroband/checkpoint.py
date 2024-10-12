@@ -338,7 +338,6 @@ class CkptManager:
 
             dcp.save(self.states, checkpoint_id=ckpt_path)
 
-
             ## we have two formats to to save the dataloader:
             ## 1. v1: save the dataloader in the same file as the outer optimizer
             ## 2. v2: save the dataloader in a data folder inside the ckpt path
@@ -395,7 +394,6 @@ class CkptManager:
         if self.live_server is not None:
             shutil.rmtree(self.shm_path, ignore_errors=True)
             self.live_server.stop()
-
         self.wait_for_blocking_job()
 
     def load(self, resume_ckpt_path: str, diloco_rank: int | None = None, skip_dataloader: bool = False) -> None:
@@ -430,9 +428,9 @@ class CkptManager:
 
         if not skip_dataloader:
             if "data_loader" in rank_state_dict.keys():
-                if self.config.data_version == "v1":
-                    self._logger.warning("v1 data tis set but we are loading a v2 ckpt")
-                
+                if self.config.data_version == "v2":
+                    self._logger.warning("v2 data tis set but we are loading a v1 ckpt")
+
                 self.dataloader.load_state_dict(rank_state_dict["data_loader"])
             else:
                 with open(os.path.join(resume_ckpt_path, "data", f"_{world_info.local_rank}.pt"), "rb") as f:

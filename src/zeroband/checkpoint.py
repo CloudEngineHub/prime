@@ -151,6 +151,7 @@ class CkptConfig(BaseConfig):
     remote: RemoteConfig | None = None
 
     remote_data_path: str | None = None
+    remote_data_load: bool = False
 
     resume: str | None = None
 
@@ -175,6 +176,15 @@ class CkptConfig(BaseConfig):
     def validate_remote_data_path(self):
         if self.remote_data_path is not None and self.data_version == "v1":
             raise ValueError("remote_data_path is only available with data_version v2")
+
+        if self.remote_data_load and self.data_version == "v1":
+            raise ValueError("remote_data_load is only available with data_version v2")
+
+        if self.remote_data_load and self.data_path is not None:
+            raise ValueError("remote_data_load and data_path are mutually exclusive")
+
+        if self.remote_data_load and self.remote_data_path is None:
+            raise ValueError("remote_data_load is set but remote_data_path is not set")
         return self
 
 
@@ -432,10 +442,10 @@ class CkptManager:
         ## we have two formats to to save the dataloader:
         ## 1. v1: save the dataloader in the same file as the outer optimizer
         ## 2. v2: save the dataloader in a data folder inside the ckpt path
+        self._logger.debug(f"loading data from {resume_ckpt_path}")
         world_info = get_world_info()
 
         if self.config.data_version == "v2":
-            self._logger.debug(f"data_path{resume_ckpt_path}")
             data_path = os.path.join(resume_ckpt_path, "data")
 
             if os.path.exists(os.path.join(data_path, f"_{world_info.local_rank}.pt")):
@@ -500,7 +510,15 @@ class CkptManager:
             opt_wrapper.load_state_dict(rank_state_dict["optimizer"])
 
         if not skip_dataloader:
-            data_path = resume_ckpt_path if data_path is None else data_path
+            if self.config.remote_data_load:
+                remote_data_path = os.path.join(self.config.remote_data_path, f"data_{self.data_rank}", "latest")
+                id_ = uuid.uuid4()
+                dest = f"/tmp/zerband/data_{id_}"
+                rsync_fsspec(remote_data_path, os.path.join(dest, "data"))
+                data_path = dest
+            else:
+                data_path = resume_ckpt_path if data_path is None else data_path
+
             self._load_data(data_path)
 
         self._init_state()

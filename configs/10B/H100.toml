@@ -33,3 +33,4 @@ interval = 100
 topk = 40
 live_recovery = true
 path = "outputs_10B_zero_band"
+remote_data = "gs://checkpoints_pi/10b_data/"

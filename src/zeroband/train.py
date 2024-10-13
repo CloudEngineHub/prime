@@ -230,6 +230,7 @@ def train(config: Config):
         scheduler=scheduler,
         dataloader=train_dataloader,
         training_progress=training_progress,
+        data_rank=config.data.data_rank,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
         live_recovery_port=elastic_device_mesh.live_recovery.port if config.ckpt.live_recovery else None,
@@ -304,7 +305,7 @@ def train(config: Config):
             logger.info(f"outer_step step: {training_progress.outer_step}")
 
         time_start_outer = time.perf_counter()
-        
+
         if config.diloco is not None:
             elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
         # at the beginning of the inner steps we allow joiner to arrive.
@@ -462,7 +463,6 @@ def train(config: Config):
                 if config.diloco is not None:
                     logger.debug("Post saved outer model: %s", get_tensor_list_signature(diloco.param_list_cpu))
                     logger.debug("optimizer hash: %s", get_optimizer_signature(diloco.outer_optimizer))
-         
 
         if config.diloco:
             tokens_per_second = (

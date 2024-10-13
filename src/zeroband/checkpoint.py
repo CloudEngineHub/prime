@@ -150,6 +150,8 @@ class CkptConfig(BaseConfig):
 
     remote: RemoteConfig | None = None
 
+    remote_data_path: str | None = None
+
     resume: str | None = None
 
     skip_dataloader: bool = False
@@ -167,6 +169,12 @@ class CkptConfig(BaseConfig):
         if self.path is None and self.remote is not None:
             raise ValueError("remote_path is set but path is not set")
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_remote_data_path(self):
+        if self.remote_data_path is not None and self.data_version == "v1":
+            raise ValueError("remote_data_path is only available with data_version v2")
         return self
 
 
@@ -193,6 +201,7 @@ class CkptManager:
         scheduler: LambdaLR,
         dataloader: StatefulDataLoader,
         training_progress: TrainingProgress,
+        data_rank: int,
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
         live_recovery_port: int | None = None,
@@ -204,6 +213,7 @@ class CkptManager:
         self.scheduler = scheduler
         self.dataloader = dataloader
         self.training_progress = training_progress
+        self.data_rank = data_rank
 
         assert (diloco_offloaded_param_list is None) == (
             diloco_offloaded_optimizer is None
@@ -218,6 +228,7 @@ class CkptManager:
         self._logger = get_logger()
         self.world_info = get_world_info()
 
+        self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
 
         if self.config.live_recovery:
@@ -236,6 +247,9 @@ class CkptManager:
 
             if self.config.remote is not None:
                 self.check_path_access(self.config.remote.path)
+
+            if self.config.remote_data_path is not None:
+                self.check_path_access(self.config.remote_data_path)
 
     def check_path_access(
         self,
@@ -358,9 +372,20 @@ class CkptManager:
                     state = {"data_loader": self.dataloader.state_dict()}
                     torch.save(state, f)
 
+                if self.config.remote_data_path is not None:
+                    remote_data_path = os.path.join(
+                        self.config.remote_data_path, f"data_{self.data_rank}", f"step_{self.training_progress.step}"
+                    )
+                    latest_remote_data_path = os.path.join(
+                        self.config.remote_data_path, f"data_{self.data_rank}", "latest"
+                    )
+
+                    self._async_save_remote(data_path, remote_data_path, blocking=False)
+                    self._async_save_remote(data_path, latest_remote_data_path, blocking=False)
+
         gc.collect()
 
-    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str) -> None:
+    def _async_save_remote(self, ckpt_path: str, remote_ckpt_path: str, blocking: bool = True) -> None:
         """asyncronously rsync a ckpt folder to a remote location. Using fsspec to handle remote cloud storage without to install
         specific libraries (e.g. s3fs).
         """
@@ -379,7 +404,10 @@ class CkptManager:
         processes = multiprocessing.Process(target=rsync, daemon=True)
         processes.start()
 
-        self.blocking_process.append(processes)
+        if blocking:
+            self.blocking_process.append(processes)
+        else:
+            self.non_blocking_process.append(processes)
 
     def wait_for_blocking_job(self):
         for process in self.blocking_process:
@@ -396,6 +424,9 @@ class CkptManager:
             shutil.rmtree(self.shm_path, ignore_errors=True)
             self.live_server.stop()
         self.wait_for_blocking_job()
+
+        for process in self.non_blocking_process:
+            process.join()
 
     def _load_data(self, resume_ckpt_path: str):
         ## we have two formats to to save the dataloader:

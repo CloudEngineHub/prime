@@ -1,4 +1,5 @@
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Any
+from dataclasses import dataclass
 import torch
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed._tensor.api import DTensor
@@ -9,6 +10,21 @@ import multiprocessing as mp
 from multiprocessing.synchronize import Event as EventType
 from safetensors import safe_open
 from safetensors.torch import save_file
+
+
+@dataclass
+class TrainingProgress(Stateful):
+    total_tokens: int
+    outer_step: int
+    step: int
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"total_tokens": self.total_tokens, "outer_step": self.outer_step, "step": self.step}
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        self.total_tokens = state_dict["total_tokens"]
+        self.outer_step = state_dict["outer_step"]
+        self.step = state_dict["step"]
 
 
 def _is_path(path_or_url: str) -> bool:
@@ -135,7 +151,7 @@ class SimpleCkptManager:
             with safe_open(_disk_path / f"__{rank}_{i}.safetensors", framework="pt", device="cpu") as f:
                 for key in f.keys():
                     _tensors[key] = f.get_tensor(key)
-            _to_local_if_dtensor(tensor).copy_(_tensors["tensor"])
+            _to_local_if_dtensor(tensor).copy_(_tensors["tensor"], non_blocking=False)
 
     def wait_for_all_jobs(self):
         self.wait_for_disk_jobs()

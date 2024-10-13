@@ -1,7 +1,6 @@
 from typing import Iterable, Optional, List
 import torch
 from torch.distributed.checkpoint.stateful import Stateful
-from torch.distributed._tensor.api import DTensor
 from zeroband.utils.logging import get_logger
 import logging
 from pathlib import Path
@@ -10,15 +9,11 @@ from multiprocessing.synchronize import Event as EventType
 from safetensors import safe_open
 from safetensors.torch import save_file
 
+from .common import _to_local_if_dtensor
+
 
 def _is_path(path_or_url: str) -> bool:
     return not path_or_url.startswith("liveckpt://")
-
-
-def _to_local_if_dtensor(t: torch.Tensor) -> torch.Tensor:
-    if isinstance(t, DTensor):
-        return t.to_local()
-    return t
 
 
 class SimpleCkptManager:

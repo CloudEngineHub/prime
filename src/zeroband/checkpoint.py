@@ -160,6 +160,8 @@ class CkptConfig(BaseConfig):
     data_version: Literal["v1", "v2"] = "v2"
     data_path: str | None = None
 
+    token_count: int | None = None
+
     @model_validator(mode="after")
     def validate_path_and_interval(self):
         if (self.path is None) != (self.interval is None):
@@ -454,6 +456,9 @@ class CkptManager:
                 data_path = os.path.join(data_path, f"diloco_{rank}")
 
         dcp.load(self.states, checkpoint_id=resume_ckpt_path)
+
+        if self.config.token_count is not None:
+            self.training_progress.total_tokens = self.config.token_count
 
         self._logger.debug("sync inner model")
         # todo(refactor): here we should rather let the diloco class handle this logic

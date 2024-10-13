@@ -433,7 +433,6 @@ class ElasticDeviceMesh:
         else:
             self.global_store.set(f"barrier_{self.world_info.global_rank}", flag)
             while (ans := self.global_store.get("barrier_0").decode("utf-8")) != flag:
-                self._logger.debug(ans)
                 if ans == "error":
                     raise RuntimeError("Monitored barrier failed due to error")
                 # TODO: Have a timeout here in case the leader is dead

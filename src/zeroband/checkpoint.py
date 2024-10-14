@@ -188,6 +188,14 @@ class CkptConfig(BaseConfig):
         return self
 
 
+def non_error_barrier():
+    logger = get_logger()
+    try:
+        dist.barrier()
+    except Exception as e:
+        logger.info(f"Error in data checkpointing barrier: {e}, continuing training")
+
+
 class CkptManager:
     """Its name CkptManager because I (sami) always misstyped chekcpoint.
 
@@ -334,10 +342,12 @@ class CkptManager:
 
         else:
             # if we are in self recovery mode the ckpt is already in shm and we just copy
+            non_error_barrier()
             if self.world_info.local_rank == 0:
                 self._async_save_remote(self.shm_path, step_ckpt_path)
 
         # push to remote
+        non_error_barrier()
         if self.world_info.local_rank == 0:
             if remote and self.config.remote is not None:
                 ckpt_path = self.shm_path if self.config.live_recovery else step_ckpt_path
@@ -381,6 +391,8 @@ class CkptManager:
                 with open(os.path.join(data_path, f"_{self.world_info.local_rank}.pt"), "wb") as f:
                     state = {"data_loader": self.dataloader.state_dict()}
                     torch.save(state, f)
+
+                non_error_barrier()
 
                 if self.config.remote_data_path is not None:
                     remote_data_path = os.path.join(
@@ -513,7 +525,7 @@ class CkptManager:
             if self.config.remote_data_load:
                 remote_data_path = os.path.join(self.config.remote_data_path, f"data_{self.data_rank}", "latest")
                 id_ = uuid.uuid4()
-                dest = f"/tmp/zerband/data_{id_}"
+                dest = f"/tmp/zeroband/data_{id_}"
                 rsync_fsspec(remote_data_path, os.path.join(dest, "data"))
                 data_path = dest
             else:

@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 from zeroband.C.collectives import ring_allreduce
-from zeroband.collectives import ring_allreduce as ring_allreduce_py
+from zeroband.collectives import ring_allreduce_py
 from zeroband.C.compression import uniform_8bit_quantize
 import math
 import pytest

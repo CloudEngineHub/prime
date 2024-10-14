@@ -47,7 +47,7 @@ def main(args):
         data_files = g_data_files
 
     logger.debug(f"Length of data_files: {len(data_files)}")
-    data_files = set(data_files[args.data_rank :: args.data_world_size])
+    data_files = set(data_files[args.data_rank :: args.data_world_size][: args.max_shards])
     logger.debug(f"Data files: {data_files}")
     logger.debug(f"Length of data_files processing: {len(data_files)}")
 
@@ -56,7 +56,7 @@ def main(args):
         f.write("#!/bin/bash\n")
         for data_file in g_data_files:
             if data_file not in data_files:
-                f.write(f"git rm {'/'.join(data_file.split('/')[-2:])}\n")
+                f.write(f"git rm {'/'.join(data_file.split('@')[-1].split('/')[1:])}\n")
         f.write("git commit -m 'remove unused data files'\n")
         f.write("git lfs pull -I '*.parquet'\n")
 
@@ -68,5 +68,6 @@ if __name__ == "__main__":
     parser.add_argument("--filter", type=str, default="", help="search shards by the filter")
     parser.add_argument("--data_rank", type=int, default=0, help="start index")
     parser.add_argument("--data_world_size", type=int, default=4, help="world size")
+    parser.add_argument("--max_shards", type=int, default=1000)
     args = parser.parse_args()
     main(args)

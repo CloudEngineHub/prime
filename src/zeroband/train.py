@@ -107,9 +107,9 @@ class Config(BaseConfig):
     ckpt: CkptConfig = CkptConfig()
 
     @model_validator(mode="after")
-    def live_reco_very_check(self):
-        if self.ckpt.live_recovery and self.diloco is None:
-            raise ValueError("Live recovery is a diloco feature. Diloco must be set if live recovery is set")
+    def shm_save_validate(self):
+        if self.ckpt.shm_save and self.diloco is None:
+            raise ValueError("Shm save is a diloco feature. Diloco must be set if live recovery is set")
         return self
 
     @model_validator(mode="after")
@@ -177,7 +177,7 @@ def train(config: Config):
         num = 1 if isinstance(config.train.ac_ckpt, bool) else config.train.ac_ckpt
         apply_ac_ckpt(model, num)
 
-    elastic_device_mesh = ElasticDeviceMesh(live_recovery=config.ckpt.live_recovery)
+    elastic_device_mesh = ElasticDeviceMesh()
 
     mp_policy = MixedPrecisionPolicy(
         param_dtype=torch.bfloat16, reduce_dtype=torch.float32 if config.train.reduce_fp32 else None
@@ -233,7 +233,6 @@ def train(config: Config):
         data_rank=config.data.data_rank,
         diloco_offloaded_optimizer=diloco.outer_optimizer if config.diloco is not None else None,
         diloco_offloaded_param_list=diloco.param_list_cpu if config.diloco is not None else None,
-        live_recovery_port=elastic_device_mesh.live_recovery.port if config.ckpt.live_recovery else None,
     )
 
     if config.train.torch_compile:
@@ -256,24 +255,24 @@ def train(config: Config):
                 logger.info(f"outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
                 logger.info(f"outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
-    if elastic_device_mesh.live_recovery.need_live_recovery:
-        ckpt_manager.download_and_load_ckpt_from_peers(
-            elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
-        )
-        elastic_device_mesh.live_recovery.need_live_recovery = False
-        training_progress.step += config.diloco.inner_steps
+    # if elastic_device_mesh.live_recovery.need_live_recovery:
+    #     ckpt_manager.download_and_load_ckpt_from_peers(
+    #         elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
+    #     )
+    #     elastic_device_mesh.live_recovery.need_live_recovery = False
+    #     training_progress.step += config.diloco.inner_steps
 
-        if config.train.log_model_hash:
-            logger.debug("Pre diloco model: %s", get_module_signature(model))
+    #     if config.train.log_model_hash:
+    #         logger.debug("Pre diloco model: %s", get_module_signature(model))
 
-        diloco.step(model, fake=True, flag=training_progress.outer_step)
+    #     diloco.step(model, fake=True, flag=training_progress.outer_step)
 
-        if config.train.log_model_hash:
-            logger.debug("Post diloco model: %s", get_module_signature(model))
+    #     if config.train.log_model_hash:
+    #         logger.debug("Post diloco model: %s", get_module_signature(model))
 
-        # do we even need to do a fake step here ? Since the inner model and outer model are the same
-        # the tensor should automatically be zero
-        training_progress.outer_step += 1
+    #     # do we even need to do a fake step here ? Since the inner model and outer model are the same
+    #     # the tensor should automatically be zero
+    #     training_progress.outer_step += 1
 
     if world_info.rank == 0:
         logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
@@ -443,7 +442,7 @@ def train(config: Config):
 
         training_progress.outer_step += 1
 
-        if config.ckpt.live_recovery:
+        if config.ckpt.shm_save:
             # we save after each outer step sync when using shm save. Used usually for live recovery
             ckpt_manager.save_shm()
 

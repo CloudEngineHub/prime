@@ -157,8 +157,8 @@ class CkptConfig(BaseConfig):
 
     skip_dataloader: bool = False
 
-    live_recovery: bool = False
-    live_recovery_rank_src: int = 0
+    shm_save: bool = False
+    # live_recovery_rank_src: int = 0
 
     data_version: Literal["v1", "v2"] = "v2"
     data_path: str | None = None
@@ -224,7 +224,6 @@ class CkptManager:
         data_rank: int,
         diloco_offloaded_param_list: list[nn.Parameter] | None,
         diloco_offloaded_optimizer: Optimizer | None,
-        live_recovery_port: int | None = None,
     ):
         self.config = config
 
@@ -251,13 +250,10 @@ class CkptManager:
         self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
 
-        if self.config.live_recovery:
+        if self.config.shm_save:
             self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
             shutil.rmtree(self.shm_path, ignore_errors=True)
             os.makedirs(self.shm_path, exist_ok=True)
-
-            serve_path = os.path.join(SHM_PATH, self.world_info.global_unique_id)
-            self.live_server = CkptLiveServer(port=live_recovery_port, ckpt_path=serve_path)
         else:
             self.shm_path = None
 
@@ -336,7 +332,7 @@ class CkptManager:
         if remote and self.config.remote is not None:
             remote_ckpt_path = os.path.join(self.config.remote.path, f"step_{self.training_progress.step}")
 
-        if not self.config.live_recovery:
+        if not self.config.shm_save:
             # if we are not in self recovery mode we save to disk
             time_start = time.perf_counter()
             self._save(step_ckpt_path)
@@ -352,7 +348,7 @@ class CkptManager:
         non_error_barrier()
         if self.world_info.local_rank == 0:
             if remote and self.config.remote is not None:
-                ckpt_path = self.shm_path if self.config.live_recovery else step_ckpt_path
+                ckpt_path = self.shm_path if self.config.shm_save else step_ckpt_path
                 self._async_save_remote(ckpt_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
@@ -586,37 +582,3 @@ def get_checkpoints_to_delete(ckpt_path: str, topk: int) -> list[str]:
     checkpoints = [d for d in os.listdir(ckpt_path) if d.startswith("step_")]
     sorted_checkpoints = sorted(checkpoints, key=lambda x: int(x.split("_")[1]), reverse=True)
     return [os.path.join(ckpt_path, d) for d in sorted_checkpoints[topk:]]
-
-
-class CkptLiveServer:
-    def __init__(self, port: int, ckpt_path: str):
-        self.port = port
-        self.ckpt_path = ckpt_path
-        self._logger = get_logger()
-        self._process = None
-
-    def start_server(self):
-        self._process = multiprocessing.Process(target=self._start_http_server, daemon=True)
-        self._process.start()
-        self._logger.info(f"Start process serving live ckpt on {self.port}")
-
-    def _start_http_server(self):
-        import http.server
-        import socketserver
-
-        os.makedirs(self.ckpt_path, exist_ok=True)
-        os.chdir(self.ckpt_path)
-        with socketserver.TCPServer(("", self.port), http.server.SimpleHTTPRequestHandler) as httpd:
-            self._logger.debug(f"Start serving live ckpt on {self.port}")
-            httpd.serve_forever()
-
-    def stop(self):
-        if self._process is not None:
-            self._process.terminate()
-
-    def __del__(self):
-        self.stop()
-
-    @property
-    def is_running(self) -> bool:
-        return self._process is not None and self._process.is_alive()

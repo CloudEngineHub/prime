@@ -32,7 +32,12 @@ from zeroband.utils.logging import get_logger
 import warnings
 import logging
 from torch.distributed._tensor.api import DTensor
-from zeroband.utils.state_dict_send_recv import recv_state_dict, send_state_dict
+from zeroband.utils.state_dict_send_recv import (
+    _get_sendable_state_dict,
+    recv_state_dict,
+    send_state_dict,
+    send_tensor_and_state_dict,
+)
 
 from zeroband.utils.world_info import get_world_info
 
@@ -258,6 +263,9 @@ class CkptManager:
 
             if self.config.remote_data_path is not None:
                 self.check_path_access(self.config.remote_data_path)
+
+        self._inner_optimizer_non_tensor_state_dict = None
+        self._inner_optimizer_tensors = None
 
     def check_path_access(
         self,
@@ -521,8 +529,6 @@ class CkptManager:
             global_pg.recv([buffer], self.config.live_recovery_rank_src, 0).wait()  # todo do the wait async
             data.copy_(buffer)
 
-        self.diloco_offloaded_optimizer.step()  # need to step to init the DTensor stats
-
         outer_opt_state_dict = recv_state_dict(
             global_pg, self.config.live_recovery_rank_src, self.diloco_offloaded_optimizer.state_dict()
         )
@@ -532,6 +538,11 @@ class CkptManager:
             global_pg, self.config.live_recovery_rank_src, self.training_progress.state_dict()
         )
         self.training_progress.load_state_dict(training_process_state_dict)
+
+        inner_opt_state_dict = recv_state_dict(
+            global_pg, self.config.live_recovery_rank_src, self.optimizer.state_dict()
+        )
+        self.optimizer.load_state_dict(inner_opt_state_dict)
 
         self._logger.debug(
             f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"
@@ -551,6 +562,9 @@ class CkptManager:
 
             send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
             send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
+            send_tensor_and_state_dict(
+                global_pg, dest_rank, self._inner_optimizer_non_tensor_state_dict, self._inner_optimizer_tensors
+            )
 
             self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
 
@@ -558,6 +572,18 @@ class CkptManager:
         thread.start()
 
         self.blocking_thread.append(thread)
+
+    def cache_inner_optimizer(self):
+        """
+        Cache the inner optimizer to cpu and cast DTensor to local tensor to be ready to send.
+        """
+        self._inner_optimizer_non_tensor_state_dict, tensors = _get_sendable_state_dict(self.optimizer.state_dict())
+        self._inner_optimizer_tensors = []
+        for tensor in tensors:
+            if isinstance(tensor, DTensor):
+                self._inner_optimizer_tensors.append(tensor.to_local().cpu())
+            else:
+                self._inner_optimizer_tensors.append(tensor.cpu())
 
 
 def delete_topk(ckpt_path: str, topk: int):

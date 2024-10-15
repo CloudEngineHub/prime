@@ -257,13 +257,27 @@ def train(config: Config):
 
     if config.ckpt.live_recovery_rank_src is not None:
         logger.info(f"Start live recovery from rank {config.ckpt.live_recovery_rank_src}")
-        elastic_device_mesh.live_recovery.ask_for_live_ckpt(config.ckpt.live_recovery_rank_src)
+        elastic_device_mesh.live_recovery.ask_for_live_ckpt(
+            config.ckpt.live_recovery_rank_src
+        )  # todo: decide if we want to do before or after opt stats init
+
+        ## we create grad buffer and opts stats mamnually, the value will be overwritten by the ckpt but we need the DTensor to be correctly init before loading it
+
+        diloco.outer_optimizer.step()  # need to step to init the DTensor stats
+
+        ## do a forward backward to init the DTensor stats
+        input_ids = torch.zeros(config.train.micro_bs, config.data.seq_length).long().to("cuda")
+        loss = model(tokens=input_ids).contiguous().mean()
+        loss.backward()
+        inner_optimizer.step()
+        inner_optimizer.zero_grad()
 
         ckpt_manager.recv_ckpt_from_peer(elastic_device_mesh.global_pg)
 
         if config.train.log_model_hash:
             logger.info(f"live recovery outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
             logger.info(f"live recovery outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
+            logger.info(f"inner optimizer hash: {get_optimizer_signature(inner_optimizer)}")
 
         training_progress.step += config.diloco.inner_steps
 
@@ -330,6 +344,7 @@ def train(config: Config):
                         f"live recovery outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}"
                     )
                     logger.info(f"live recovery outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
+                    logger.info(f"inner optimizer hash: {get_optimizer_signature(inner_optimizer)}")
 
                 try:
                     ckpt_manager.send_ckpt_to_peer(elastic_device_mesh.global_pg, maybe_dest_rank)
@@ -461,6 +476,9 @@ def train(config: Config):
                 logger.debug("inner diloco model: %s", get_module_signature(model))
                 logger.debug(f"inner diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
                 logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
+
+            # todo we could skip this is we don't have live recovery enabled
+            ckpt_manager.cache_inner_optimizer()
 
         training_progress.outer_step += 1
 

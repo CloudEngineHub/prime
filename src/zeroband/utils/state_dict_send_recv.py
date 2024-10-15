@@ -4,8 +4,6 @@ import torch
 from torch.distributed import ProcessGroup
 from torch.distributed._tensor.api import DTensor
 
-from zeroband.utils.logging import get_logger
-
 
 def _object_to_tensor(obj):
     f = io.BytesIO()
@@ -101,19 +99,19 @@ def _load_sendable_state_dict(tensors: list[torch.Tensor], state_dict: dict) -> 
 
 def send_state_dict(pg: ProcessGroup, state_dict: dict, dest_rank: int) -> None:
     non_tensored_state_dict, tensors = _get_sendable_state_dict(state_dict)
-    logger = get_logger()
+    send_tensor_and_state_dict(pg, dest_rank, non_tensored_state_dict, tensors)
 
-    logger.debug(f"Sending {len(tensors)} tensors")
 
-    state_dict_tensor_buffer, size = _object_to_tensor(non_tensored_state_dict)
+def send_tensor_and_state_dict(pg: ProcessGroup, dest_rank: int, state_dict: dict, tensors: list[torch.Tensor]) -> None:
+    state_dict_tensor_buffer, size = _object_to_tensor(state_dict)
     pg.send([size], dest_rank, 0).wait()
     pg.send([state_dict_tensor_buffer], dest_rank, 0).wait()
 
-    logger.debug(f"Sending {len(tensors)} tensors")
     for tensor in tensors:
         buffer = tensor
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
+
         pg.send([buffer], dest_rank, 0).wait()
 
 
@@ -130,16 +128,12 @@ def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dic
 
     _, tensors = _get_sendable_state_dict(og_state_dict)
 
-    logger = get_logger()
-
-    logger.debug(f"Receiving {len(tensors)} tensors")
-
     for tensor in tensors:
         buffer = tensor
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
 
-        data = torch.empty_like(buffer)
+        data = torch.empty_like(buffer).to("cpu")
         pg.recv([data], src_rank, 0).wait()
 
         buffer.copy_(data)

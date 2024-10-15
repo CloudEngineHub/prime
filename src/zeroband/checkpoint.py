@@ -30,7 +30,6 @@ from torch.distributed.checkpoint.stateful import Stateful
 from zeroband.utils.logging import get_logger
 import warnings
 import logging
-from zeroband.utils.wget import wget
 from torch.distributed._tensor.api import DTensor
 
 from zeroband.utils.world_info import get_world_info
@@ -158,7 +157,7 @@ class CkptConfig(BaseConfig):
     skip_dataloader: bool = False
 
     shm_save: bool = False
-    # live_recovery_rank_src: int = 0
+    live_recovery_rank_src: int | None = None
 
     data_version: Literal["v1", "v2"] = "v2"
     data_path: str | None = None
@@ -538,36 +537,108 @@ class CkptManager:
 
         self._logger.info(f"Loaded checkpoint from {resume_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
-    def download_and_load_ckpt_from_peers(self, address: str):
+    def recv_ckpt_from_peer(self, global_pg: dist.ProcessGroup):
+        assert self.diloco_offloaded_param_list is not None, "recv_ckpt_from_peers is only supported with diloco"
+
         time_start = time.perf_counter()
-        ckpt_path = f"/dev/shm/zeroband_reco/node_{self.world_info.global_rank}"
-        path = os.path.join(ckpt_path, f"diloco_{self.world_info.diloco_rank}")
+        self._logger.debug(f"Start receiving ckpt from rank {self.config.live_recovery_rank_src}")
 
-        if self.world_info.local_rank == 0:
-            # only local rank download the ckpt
-            if os.path.exists(path):
-                shutil.rmtree(path)
-            os.makedirs(path, exist_ok=True)
+        for param in self.diloco_offloaded_param_list:
+            data = param.data
+            if isinstance(param.data, DTensor):
+                data = param.data.to_local()
 
-            dest_rank = 0
+            buffer = torch.empty_like(data)
+            global_pg.recv([buffer], self.config.live_recovery_rank_src, 0).wait()  # todo do the wait async
+            data.copy_(buffer)
 
-            self._logger.info(f"Started downloading ckpt from http://{address}/latest/diloco_{dest_rank} to {path}")
-            wget(
-                source=f"http://{address}/latest/diloco_{dest_rank}",
-                destination=path,
-            )
-            wget(
-                source=f"http://{address}/latest/diloco_{dest_rank}/.metadata",
-                destination=path,
-            )
-            self._logger.info(
-                f"Downloaded checkpoint from http://{address}/diloco_{dest_rank} in {time.perf_counter() - time_start} seconds"
-            )
+        self._logger.debug(
+            f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"
+        )
 
-        dist.barrier()
-        self.load(resume_ckpt_path=ckpt_path, skip_dataloader=True)
+    def send_ckpt_to_peer(self, global_pg: dist.ProcessGroup, dest_rank: int):
+        assert self.diloco_offloaded_param_list is not None, "send_ckpt_to_peers is only supported with diloco"
+        time_start = time.perf_counter()
+        self._logger.debug(f"Start sending ckpt to rank {dest_rank}")
 
-        # we don't want the dataloader states to be loaded as they are not the same on each rank
+        for param in self.diloco_offloaded_param_list:
+            data = param.data
+            if isinstance(data, DTensor):
+                data = data.to_local()
+            global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
+
+        self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
+
+
+def _tensor_to_placeholder(idx: int, tensor: torch.Tensor) -> str:
+    return f"zeroband_tensor_{idx}_{tensor.shape}_{tensor.dtype}"
+
+
+def _validate_placeholder_to_tensor(placeholder: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+    """
+    validate that the tensor is compatible with the placeholder.
+    """
+    try:
+        idx, shape, dtype = placeholder.split("_")[2:]
+    except ValueError as e:
+        raise ValueError(f"Invalid tensor placeholder {placeholder}") from e
+
+    print(idx, shape, dtype)
+    tensor = tensors[int(idx)]
+    if shape != str(tensor.shape):
+        raise ValueError(
+            f"tensor {idx} try to load a tensor with shape {shape} but the tensor has shape {tensor.shape}"
+        )
+    if dtype != str(tensor.dtype):
+        raise ValueError(
+            f"tensor {idx} try to load a tensor with dtype {dtype} but the tensor has dtype {tensor.dtype}"
+        )
+
+    return tensor
+
+
+def get_sendable_opt_state(state_dict: dict) -> tuple[list[torch.Tensor], dict]:
+    """
+    This function take an optimizer and return a torch.send/recv-able format.
+
+    It splits the state dict into two part :
+    * a list of tensor
+    * a dict emptied from tensor
+
+    The order is deterministic. The function can be used in pair with  load_sendable_opt_state
+    """
+    tensors: list[torch.Tensor] = []
+
+    def _split(state_dict_, tensors_):
+        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
+            if isinstance(value, dict):
+                state_dict_[key] = _split(value, tensors_)
+            if isinstance(value, torch.Tensor):
+                idx = len(tensors_)
+                tensors_.append(value)
+                state_dict_[key] = _tensor_to_placeholder(idx, value)
+
+        return state_dict_
+
+    return _split(state_dict, tensors), tensors
+
+
+def load_sendable_opt_state(tensors: list[torch.Tensor], state_dict: dict) -> dict:
+    """
+    This function take a list of tensor and a state dict and return a optimizer state dict.
+
+    The function can be used in pair with load_sendable_opt_state
+    """
+
+    def _load(state_dict_):
+        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
+            if isinstance(value, dict):
+                state_dict_[key] = _load(value)
+            if isinstance(value, str) and value.startswith("zeroband_tensor_"):
+                state_dict_[key] = _validate_placeholder_to_tensor(value, tensors)
+        return state_dict_
+
+    return _load(state_dict)
 
 
 def delete_topk(ckpt_path: str, topk: int):

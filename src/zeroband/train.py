@@ -107,12 +107,6 @@ class Config(BaseConfig):
     ckpt: CkptConfig = CkptConfig()
 
     @model_validator(mode="after")
-    def shm_save_validate(self):
-        if self.ckpt.shm_save and self.diloco is None:
-            raise ValueError("Shm save is a diloco feature. Diloco must be set if live recovery is set")
-        return self
-
-    @model_validator(mode="after")
     def ckpt_diloco_step(self):
         if self.ckpt is not None and self.ckpt.interval is not None and self.diloco is not None:
             assert (
@@ -470,10 +464,6 @@ def train(config: Config):
                 logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
         training_progress.outer_step += 1
-
-        if config.ckpt.shm_save:
-            # we save after each outer step sync when using shm save. Used usually for live recovery
-            ckpt_manager.save_shm()
 
         if (
             config.ckpt.interval is not None

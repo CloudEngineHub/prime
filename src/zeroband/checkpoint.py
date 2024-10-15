@@ -37,8 +37,6 @@ from zeroband.utils.world_info import get_world_info
 
 ## code inspired by torchtitan https://github.com/pytorch/torchtitan/blob/main/torchtitan/checkpoint.py
 
-SHM_PATH = "/dev/shm/zeroband"
-
 
 @dataclass
 class TrainingProgress(Stateful):
@@ -157,7 +155,6 @@ class CkptConfig(BaseConfig):
 
     skip_dataloader: bool = False
 
-    shm_save: bool = False
     live_recovery_rank_src: int | None = None
 
     data_version: Literal["v1", "v2"] = "v2"
@@ -250,13 +247,6 @@ class CkptManager:
         self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
 
-        if self.config.shm_save:
-            self.shm_path = os.path.join(SHM_PATH, self.world_info.global_unique_id, "latest")
-            shutil.rmtree(self.shm_path, ignore_errors=True)
-            os.makedirs(self.shm_path, exist_ok=True)
-        else:
-            self.shm_path = None
-
         if self.world_info.local_rank == 0:
             if self.config.path is not None:
                 self.check_path_access(self.config.path)
@@ -300,22 +290,6 @@ class CkptManager:
         #     # main reason is that we actually don't a cpu model but just a list of cpu parameters.
         #     self.states["diloco_optimizer"] = self.diloco_offloaded_optimizer
 
-    def save_shm(self) -> None:
-        """
-        Save the latest checkpoint in shared memory.
-        """
-        time_start = time.perf_counter()
-        ckpt_path = self.shm_path
-        if self.world_info.local_rank == 0:
-            shutil.rmtree(ckpt_path, ignore_errors=True)
-
-        dist.barrier()
-
-        self._save(ckpt_path)
-        if not self.live_server.is_running:
-            self.live_server.start_server()
-        self._logger.info(f"Saved checkpoint to {ckpt_path} in {time.perf_counter() - time_start} seconds")
-
     def save(self, remote: bool = False) -> None:
         """
         Each rank will save the right shard of the model and optimizer.
@@ -324,7 +298,6 @@ class CkptManager:
 
         Save in the subfolder `step_<step>`.
 
-        shm_save=True mean we previsouly saved to shm so we just do a copy past to disk
         """
 
         step_ckpt_path = os.path.join(self.config.path, f"step_{self.training_progress.step}")
@@ -332,24 +305,16 @@ class CkptManager:
         if remote and self.config.remote is not None:
             remote_ckpt_path = os.path.join(self.config.remote.path, f"step_{self.training_progress.step}")
 
-        if not self.config.shm_save:
-            # if we are not in self recovery mode we save to disk
-            time_start = time.perf_counter()
-            self._save(step_ckpt_path)
-            self._logger.info(f"Saved checkpoint to {step_ckpt_path} in {time.perf_counter() - time_start} seconds")
-
-        else:
-            # if we are in self recovery mode the ckpt is already in shm and we just copy
-            non_error_barrier()
-            if self.world_info.local_rank == 0:
-                self._async_save_remote(self.shm_path, step_ckpt_path)
+        # if we are not in self recovery mode we save to disk
+        time_start = time.perf_counter()
+        self._save(step_ckpt_path)
+        self._logger.info(f"Saved checkpoint to {step_ckpt_path} in {time.perf_counter() - time_start} seconds")
 
         # push to remote
         non_error_barrier()
         if self.world_info.local_rank == 0:
             if remote and self.config.remote is not None:
-                ckpt_path = self.shm_path if self.config.shm_save else step_ckpt_path
-                self._async_save_remote(ckpt_path, remote_ckpt_path)
+                self._async_save_remote(step_ckpt_path, remote_ckpt_path)
 
     def _save(self, ckpt_path: str):
         self.wait_for_blocking_job()
@@ -440,9 +405,6 @@ class CkptManager:
                 delete_topk(self.config.path, self.config.topk)
 
     def _del__(self):
-        if self.live_server is not None:
-            shutil.rmtree(self.shm_path, ignore_errors=True)
-            self.live_server.stop()
         self.wait_for_blocking_job()
 
         for process in self.non_blocking_process:

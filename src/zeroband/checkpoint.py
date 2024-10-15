@@ -3,6 +3,7 @@ import gc
 import multiprocessing
 import os
 import shutil
+import threading
 import time
 from typing import Any, Literal
 import uuid
@@ -246,6 +247,7 @@ class CkptManager:
 
         self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
+        self.blocking_thread: list[threading.Thread] = []
 
         if self.world_info.local_rank == 0:
             if self.config.path is not None:
@@ -398,7 +400,11 @@ class CkptManager:
         for process in self.blocking_process:
             process.join()
 
+        for thread in self.blocking_thread:
+            thread.join()
+
         self.blocking_process = []
+        self.blocking_thread = []
 
         if self.world_info.local_rank == 0:
             if self.config.topk is not None:
@@ -532,20 +538,26 @@ class CkptManager:
         )
 
     def send_ckpt_to_peer(self, global_pg: dist.ProcessGroup, dest_rank: int):
-        assert self.diloco_offloaded_param_list is not None, "send_ckpt_to_peers is only supported with diloco"
-        time_start = time.perf_counter()
-        self._logger.debug(f"Start sending ckpt to rank {dest_rank}")
+        def async_send():
+            assert self.diloco_offloaded_param_list is not None, "send_ckpt_to_peers is only supported with diloco"
+            time_start = time.perf_counter()
+            self._logger.debug(f"Start sending ckpt to rank {dest_rank}")
 
-        for param in self.diloco_offloaded_param_list:
-            data = param.data
-            if isinstance(data, DTensor):
-                data = data.to_local()
-            global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
+            for param in self.diloco_offloaded_param_list:
+                data = param.data
+                if isinstance(data, DTensor):
+                    data = data.to_local()
+                global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
 
-        send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
-        send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
+            send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
+            send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
 
-        self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
+            self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
+
+        thread = threading.Thread(target=async_send)
+        thread.start()
+
+        self.blocking_thread.append(thread)
 
 
 def delete_topk(ckpt_path: str, topk: int):

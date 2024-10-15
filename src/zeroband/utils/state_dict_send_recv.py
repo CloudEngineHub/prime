@@ -1,0 +1,146 @@
+import io
+import pickle
+import torch
+from torch.distributed import ProcessGroup
+from torch.distributed._tensor.api import DTensor
+
+from zeroband.utils.logging import get_logger
+
+
+def _object_to_tensor(obj):
+    f = io.BytesIO()
+    pickle.Pickler(f).dump(obj)
+    byte_storage = torch.ByteStorage._from_buffer(f.getvalue())  # type: ignore[attr-defined]
+    # Do not replace `torch.ByteTensor` or `torch.LongTensor` with torch.tensor and specifying dtype.
+    # Otherwise, it will casue 100X slowdown.
+    # See: https://github.com/pytorch/pytorch/issues/65696
+    byte_tensor = torch.ByteTensor(byte_storage)
+    local_size = torch.LongTensor([byte_tensor.numel()])
+    return byte_tensor, local_size
+
+
+def _tensor_to_object(tensor, tensor_size):
+    tensor = tensor.cpu()
+    buf = tensor.numpy().tobytes()[:tensor_size]
+    return pickle.Unpickler(io.BytesIO(buf)).load()
+
+
+def _tensor_to_placeholder(idx: int, tensor: torch.Tensor) -> str:
+    return f"zeroband_tensor_{idx}_{tensor.shape}_{tensor.dtype}"
+
+
+def _validate_placeholder_to_tensor(placeholder: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+    """
+    validate that the tensor is compatible with the placeholder.
+    """
+    try:
+        idx, shape, dtype = placeholder.split("_")[2:]
+    except ValueError as e:
+        raise ValueError(f"Invalid tensor placeholder {placeholder}") from e
+
+    tensor = tensors[int(idx)]
+    if shape != str(tensor.shape):
+        raise ValueError(
+            f"tensor {idx} try to load a tensor with shape {shape} but the tensor has shape {tensor.shape}"
+        )
+    if dtype != str(tensor.dtype):
+        raise ValueError(
+            f"tensor {idx} try to load a tensor with dtype {dtype} but the tensor has dtype {tensor.dtype}"
+        )
+
+    return tensor
+
+
+def _get_sendable_state_dict(state_dict: dict) -> tuple[dict, list[torch.Tensor]]:
+    """
+    This function take a state dict (dict with tensor inside) and return a torch.send/recv-able format.
+
+    It splits the state dict into two part :
+    * a list of tensor
+    * a dict emptied from tensor
+
+    The order is deterministic. The function can be used in pair with  load_sendable_opt_state
+    """
+    tensors: list[torch.Tensor] = []
+
+    def _split(state_dict_, tensors_):
+        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
+            if isinstance(value, dict):
+                state_dict_[key] = _split(value, tensors_)
+            if isinstance(value, torch.Tensor):
+                idx = len(tensors_)
+                tensors_.append(value)
+                state_dict_[key] = _tensor_to_placeholder(idx, value)
+
+        return state_dict_
+
+    state_dict = _split(state_dict, tensors)
+    return state_dict, tensors
+
+
+def _load_sendable_state_dict(tensors: list[torch.Tensor], state_dict: dict) -> dict:
+    """
+    This function take a list of tensor and a state dict and return a optimizer state dict.
+
+    The function can be used in pair with load_sendable_opt_state
+    """
+
+    def _load(state_dict_):
+        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
+            if isinstance(value, dict):
+                state_dict_[key] = _load(value)
+            if isinstance(value, str) and value.startswith("zeroband_tensor_"):
+                state_dict_[key] = _validate_placeholder_to_tensor(value, tensors)
+        return state_dict_
+
+    return _load(state_dict)
+
+
+def send_state_dict(pg: ProcessGroup, state_dict: dict, dest_rank: int) -> None:
+    non_tensored_state_dict, tensors = _get_sendable_state_dict(state_dict)
+    logger = get_logger()
+
+    logger.debug(f"Sending {len(tensors)} tensors")
+
+    state_dict_tensor_buffer, size = _object_to_tensor(non_tensored_state_dict)
+    pg.send([size], dest_rank, 0).wait()
+    pg.send([state_dict_tensor_buffer], dest_rank, 0).wait()
+
+    logger.debug(f"Sending {len(tensors)} tensors")
+    for tensor in tensors:
+        buffer = tensor
+        if isinstance(tensor, DTensor):
+            buffer = tensor.to_local()
+        pg.send([buffer], dest_rank, 0).wait()
+
+
+def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dict:
+    size = torch.LongTensor(1)
+
+    # Receive object sizes
+    pg.recv([size], src_rank, 0).wait()
+    # Tensor to receive serialized objects into.
+    object_tensor = torch.empty(size.item(), dtype=torch.uint8)
+
+    pg.recv([object_tensor], src_rank, 0).wait()
+    state_dict = _tensor_to_object(object_tensor, size)
+
+    _, tensors = _get_sendable_state_dict(og_state_dict)
+
+    logger = get_logger()
+
+    logger.debug(f"Receiving {len(tensors)} tensors")
+
+    for tensor in tensors:
+        buffer = tensor
+        if isinstance(tensor, DTensor):
+            buffer = tensor.to_local()
+
+        data = torch.empty_like(buffer)
+        pg.recv([data], src_rank, 0).wait()
+
+        buffer.copy_(data)
+
+    state_dict = _load_sendable_state_dict(tensors, state_dict)
+
+    return state_dict

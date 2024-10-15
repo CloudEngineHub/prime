@@ -31,6 +31,7 @@ from zeroband.utils.logging import get_logger
 import warnings
 import logging
 from torch.distributed._tensor.api import DTensor
+from zeroband.utils.state_dict_send_recv import recv_state_dict, send_state_dict
 
 from zeroband.utils.world_info import get_world_info
 
@@ -552,6 +553,13 @@ class CkptManager:
             global_pg.recv([buffer], self.config.live_recovery_rank_src, 0).wait()  # todo do the wait async
             data.copy_(buffer)
 
+        self.diloco_offloaded_optimizer.step()  # need to step to init the DTensor stats
+
+        outer_opt_state_dict = recv_state_dict(
+            global_pg, self.config.live_recovery_rank_src, self.diloco_offloaded_optimizer.state_dict()
+        )
+        self.diloco_offloaded_optimizer.load_state_dict(outer_opt_state_dict)
+
         self._logger.debug(
             f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"
         )
@@ -567,78 +575,9 @@ class CkptManager:
                 data = data.to_local()
             global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
 
+        send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
+
         self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
-
-
-def _tensor_to_placeholder(idx: int, tensor: torch.Tensor) -> str:
-    return f"zeroband_tensor_{idx}_{tensor.shape}_{tensor.dtype}"
-
-
-def _validate_placeholder_to_tensor(placeholder: str, tensors: list[torch.Tensor]) -> torch.Tensor:
-    """
-    validate that the tensor is compatible with the placeholder.
-    """
-    try:
-        idx, shape, dtype = placeholder.split("_")[2:]
-    except ValueError as e:
-        raise ValueError(f"Invalid tensor placeholder {placeholder}") from e
-
-    print(idx, shape, dtype)
-    tensor = tensors[int(idx)]
-    if shape != str(tensor.shape):
-        raise ValueError(
-            f"tensor {idx} try to load a tensor with shape {shape} but the tensor has shape {tensor.shape}"
-        )
-    if dtype != str(tensor.dtype):
-        raise ValueError(
-            f"tensor {idx} try to load a tensor with dtype {dtype} but the tensor has dtype {tensor.dtype}"
-        )
-
-    return tensor
-
-
-def get_sendable_opt_state(state_dict: dict) -> tuple[list[torch.Tensor], dict]:
-    """
-    This function take an optimizer and return a torch.send/recv-able format.
-
-    It splits the state dict into two part :
-    * a list of tensor
-    * a dict emptied from tensor
-
-    The order is deterministic. The function can be used in pair with  load_sendable_opt_state
-    """
-    tensors: list[torch.Tensor] = []
-
-    def _split(state_dict_, tensors_):
-        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
-            if isinstance(value, dict):
-                state_dict_[key] = _split(value, tensors_)
-            if isinstance(value, torch.Tensor):
-                idx = len(tensors_)
-                tensors_.append(value)
-                state_dict_[key] = _tensor_to_placeholder(idx, value)
-
-        return state_dict_
-
-    return _split(state_dict, tensors), tensors
-
-
-def load_sendable_opt_state(tensors: list[torch.Tensor], state_dict: dict) -> dict:
-    """
-    This function take a list of tensor and a state dict and return a optimizer state dict.
-
-    The function can be used in pair with load_sendable_opt_state
-    """
-
-    def _load(state_dict_):
-        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
-            if isinstance(value, dict):
-                state_dict_[key] = _load(value)
-            if isinstance(value, str) and value.startswith("zeroband_tensor_"):
-                state_dict_[key] = _validate_placeholder_to_tensor(value, tensors)
-        return state_dict_
-
-    return _load(state_dict)
 
 
 def delete_topk(ckpt_path: str, topk: int):

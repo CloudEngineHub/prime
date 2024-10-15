@@ -560,6 +560,11 @@ class CkptManager:
         )
         self.diloco_offloaded_optimizer.load_state_dict(outer_opt_state_dict)
 
+        training_process_state_dict = recv_state_dict(
+            global_pg, self.config.live_recovery_rank_src, self.training_progress.state_dict()
+        )
+        self.training_progress.load_state_dict(training_process_state_dict)
+
         self._logger.debug(
             f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"
         )
@@ -576,6 +581,7 @@ class CkptManager:
             global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
 
         send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
+        send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
 
         self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
 

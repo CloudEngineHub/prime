@@ -120,6 +120,12 @@ class Config(BaseConfig):
             ), "ckpt interval must be a multiple of diloco inner steps as we only save at the end of an outer step"
         return self
 
+    @model_validator(mode="after")
+    def validate_live_recovery_rank_src(self):
+        if self.ckpt is not None and self.ckpt.live_recovery_rank_src is not None and self.diloco is None:
+            raise ValueError("live_recovery_rank_src is only supported with diloco")
+        return self
+
 
 def train(config: Config):
     # batch_size is the total batch size for all GPUs
@@ -177,7 +183,7 @@ def train(config: Config):
         num = 1 if isinstance(config.train.ac_ckpt, bool) else config.train.ac_ckpt
         apply_ac_ckpt(model, num)
 
-    elastic_device_mesh = ElasticDeviceMesh()
+    elastic_device_mesh = ElasticDeviceMesh(enable=config.diloco is not None)
 
     mp_policy = MixedPrecisionPolicy(
         param_dtype=torch.bfloat16, reduce_dtype=torch.float32 if config.train.reduce_fp32 else None
@@ -255,24 +261,27 @@ def train(config: Config):
                 logger.info(f"outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
                 logger.info(f"outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
-    # if elastic_device_mesh.live_recovery.need_live_recovery:
-    #     ckpt_manager.download_and_load_ckpt_from_peers(
-    #         elastic_device_mesh.live_recovery.get_address(config.ckpt.live_recovery_rank_src)
-    #     )
-    #     elastic_device_mesh.live_recovery.need_live_recovery = False
-    #     training_progress.step += config.diloco.inner_steps
+    if config.ckpt.live_recovery_rank_src is not None:
+        logger.info(f"Start live recovery from rank {config.ckpt.live_recovery_rank_src}")
+        elastic_device_mesh.live_recovery.ask_for_live_ckpt(config.ckpt.live_recovery_rank_src)
 
-    #     if config.train.log_model_hash:
-    #         logger.debug("Pre diloco model: %s", get_module_signature(model))
+        ckpt_manager.recv_ckpt_from_peer(elastic_device_mesh.global_pg)
 
-    #     diloco.step(model, fake=True, flag=training_progress.outer_step)
+        if config.train.log_model_hash:
+            logger.info(f"live recovery outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+            logger.info(f"live recovery outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
-    #     if config.train.log_model_hash:
-    #         logger.debug("Post diloco model: %s", get_module_signature(model))
+        training_progress.step += config.diloco.inner_steps
 
-    #     # do we even need to do a fake step here ? Since the inner model and outer model are the same
-    #     # the tensor should automatically be zero
-    #     training_progress.outer_step += 1
+        diloco.step(model, fake=True, flag=training_progress.outer_step)
+        # (sami) do we even need to do a fake step here ? Since the inner model and outer model are the same
+        # the tensor should automatically be zero ==> (sami but later) NO they are not, when we download the cpu model weight we don't update the gpu model weight.
+        training_progress.outer_step += 1
+
+        if config.train.log_model_hash:
+            logger.debug("inner diloco model: %s", get_module_signature(model))
+            logger.debug(f"inner diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+            logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
     if world_info.rank == 0:
         logger_cls = WandbMetricLogger if config.metric_logger_type == "wandb" else DummyMetricLogger
@@ -298,6 +307,8 @@ def train(config: Config):
 
     logger.info("starting training")
 
+    diloco.outer_optimizer.step()  # TODO remove. If you are a reviewer and see its still yet block this PR
+
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs
@@ -316,6 +327,24 @@ def train(config: Config):
         for inner_step in range(num_inner_steps):
             loss_batch = 0
             z_loss_batch = 0
+
+            maybe_dest_rank = elastic_device_mesh.live_recovery.should_send_ckpt_to()
+            if maybe_dest_rank is not None:
+                logger.info(f"Start live recovery to rank {maybe_dest_rank}")
+                if config.train.log_model_hash:
+                    logger.info(
+                        f"live recovery outer optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}"
+                    )
+                    logger.info(f"live recovery outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
+
+                # todo the ckpt should be async here
+                try:
+                    ckpt_manager.send_ckpt_to_peer(elastic_device_mesh.global_pg, maybe_dest_rank)
+                except RuntimeError as e:
+                    # error can happen if the receiver drop off. We don't want to stop the training if this happend.
+                    logger.error(f"Error sending ckpt to rank {maybe_dest_rank}: {e}")
+
+                elastic_device_mesh.live_recovery.reset()
 
             for grad_acc_step in range(gradient_accumulation_steps):
                 is_accumulating = grad_acc_step < gradient_accumulation_steps - 1
@@ -510,7 +539,6 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
-    torch.manual_seed(42)  # this ensure same weight init across diloco workers
 
     world_info = get_world_info()
     logger = get_logger()

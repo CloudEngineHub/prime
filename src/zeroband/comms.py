@@ -42,15 +42,17 @@ class ElasticDeviceMesh:
     local_pg: dist.ProcessGroup
     global_pg: dist.ProcessGroup
 
-    def __init__(self, backend: str = "cpu:gloo,cuda:nccl"):
+    def __init__(self, backend: str = "cpu:gloo,cuda:nccl", enable: bool = True):
         self._logger = get_logger()
         self.world_info = get_world_info()
 
         # Initialize global process group
         self.global_pg = FakeProcessGroup(self.world_info.rank, 1)
 
-        if self.world_info.global_world_size > 1:
+        self.enable = enable
+        if enable:
             self._init_global_pg()
+            self.live_recovery = LiveRecovery(store=self.global_store)
 
         # Initialize local process group
         dist.init_process_group(backend=backend)
@@ -317,8 +319,8 @@ class ElasticDeviceMesh:
             bool: True if the global_pg was reinitialized, False otherwise.
         """
 
-        if self.world_info.global_world_size == 1:
-            # no op if we only have one node
+        if not self.enable:
+            # no op if disabled
             return
 
         time_start = time.perf_counter()
@@ -379,6 +381,8 @@ class ElasticDeviceMesh:
         # Update rank if needed (otherwise, the next remap will do the lookup incorrectly)
         if old_global_rank != self.world_info.global_rank:
             self.global_store.set(f"rank_{self.world_info.global_unique_id}", str(self.world_info.global_rank))
+            self.live_recovery.reset()
+
         self._logger.debug("Reinitialized global_pg done in %s seconds", time.perf_counter() - time_start)
 
         # TODO: We need to reset the self.world_info.global_rank reference
@@ -428,3 +432,30 @@ class ElasticDeviceMesh:
                 time.sleep(TCPSTORE_POLLING_INTERVAL)
 
         self._logger.debug("Monitored barrier resolved in %s seconds", time.perf_counter() - time_start)
+
+
+class LiveRecovery:
+    def __init__(self, store: dist.Store):
+        self.logger = get_logger()
+        self.world_info = get_world_info()
+
+        self.store = dist.PrefixStore("live_recovery", store)
+        self.reset()
+
+    def reset(self):
+        self.store.set(f"rank_{self.world_info.global_rank}", "null")
+
+    def should_send_ckpt_to(self) -> int | None:
+        """use this function to check if someone is awaiting for a live ckpt"""
+        data = self.store.get(f"rank_{self.world_info.global_rank}").decode("utf-8")
+        if data == "null":
+            return None
+        try:
+            return int(data)
+        except ValueError as e:
+            self.logger.error(f"Error parsing live recovery data: {e}")
+            return None
+
+    def ask_for_live_ckpt(self, rank: int) -> int | None:
+        """use this function to send a signal to a node to ask for a live ckpt"""
+        self.store.set(f"rank_{rank}", str(self.world_info.global_rank))

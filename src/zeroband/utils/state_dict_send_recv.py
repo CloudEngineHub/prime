@@ -64,15 +64,18 @@ def _get_sendable_state_dict(state_dict: dict) -> tuple[dict, list[torch.Tensor]
     tensors: list[torch.Tensor] = []
 
     def _split(state_dict_, tensors_):
+        new_dict = {}
         for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
             if isinstance(value, dict):
-                state_dict_[key] = _split(value, tensors_)
-            if isinstance(value, torch.Tensor):
+                new_dict[key] = _split(value, tensors_)
+            elif isinstance(value, torch.Tensor):
                 idx = len(tensors_)
                 tensors_.append(value)
-                state_dict_[key] = _tensor_to_placeholder(idx, value)
+                new_dict[key] = _tensor_to_placeholder(idx, value)
+            else:
+                new_dict[key] = value
 
-        return state_dict_
+        return new_dict
 
     state_dict = _split(state_dict, tensors)
     return state_dict, tensors
@@ -80,7 +83,7 @@ def _get_sendable_state_dict(state_dict: dict) -> tuple[dict, list[torch.Tensor]
 
 def _load_sendable_state_dict(tensors: list[torch.Tensor], state_dict: dict) -> dict:
     """
-    This function take a list of tensor and a state dict and return a optimizer state dict.
+    This function take a list of tensor and a state dict and return state dict.
 
     The function can be used in pair with load_sendable_opt_state
     """

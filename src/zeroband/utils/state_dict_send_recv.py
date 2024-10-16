@@ -57,7 +57,7 @@ def _get_sendable_state_dict(state_dict: dict) -> tuple[dict, list[torch.Tensor]
     * a list of tensor
     * a dict emptied from tensor
 
-    The order is deterministic. The function can be used in pair with  load_sendable_opt_state
+    The order is deterministic. The function can be used in pair with  _load_sendable_state_dict
     """
     tensors: list[torch.Tensor] = []
 
@@ -83,7 +83,7 @@ def _load_sendable_state_dict(tensors: list[torch.Tensor], state_dict: dict) -> 
     """
     This function take a list of tensor and a state dict and return state dict.
 
-    The function can be used in pair with load_sendable_opt_state
+    The function can be used in pair with _get_sendable_state_dict
     """
 
     def _load(state_dict_):

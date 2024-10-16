@@ -111,6 +111,7 @@ def send_tensor_and_state_dict(pg: ProcessGroup, dest_rank: int, state_dict: dic
     pg.send([size], dest_rank, 0).wait()
     pg.send([state_dict_tensor_buffer], dest_rank, 0).wait()
 
+    jobs = []
     for i, tensor in enumerate(tensors):
         buffer = tensor
         if isinstance(tensor, DTensor):
@@ -118,7 +119,10 @@ def send_tensor_and_state_dict(pg: ProcessGroup, dest_rank: int, state_dict: dic
 
         buffer = buffer.detach().cpu()
 
-        pg.send([buffer], dest_rank, 0).wait()
+        jobs.append(pg.send([buffer], dest_rank, i))
+
+    for job in jobs:
+        job.wait()
 
 
 def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dict:
@@ -134,15 +138,24 @@ def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dic
 
     _, tensors = _get_sendable_state_dict(og_state_dict)
 
+    jobs = []
+    datas = []
     for i, tensor in enumerate(tensors):
         buffer = tensor
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
 
         data = torch.empty_like(buffer, device="cpu")
-        pg.recv([data], src_rank, 0).wait()
+        jobs.append(pg.recv([data], src_rank, i))
+        datas.append(data)
 
-        buffer.copy_(data)
+    for job in jobs:
+        job.wait()
+
+    for tensor, data in zip(tensors, datas):
+        if isinstance(tensor, DTensor):
+            tensor = tensor.to_local()
+        tensor.copy_(data)
 
     state_dict = _load_sendable_state_dict(tensors, state_dict)
 

@@ -517,13 +517,24 @@ class CkptManager:
         time_start = time.perf_counter()
         self._logger.debug(f"Start receiving ckpt from rank {self.config.live_recovery_rank_src}")
 
-        for param in self.diloco_offloaded_param_list:
+        jobs = []
+        buffers = []
+        for i, param in enumerate(self.diloco_offloaded_param_list):
             data = param.data
             if isinstance(param.data, DTensor):
                 data = param.data.to_local()
 
             buffer = torch.empty_like(data)
-            global_pg.recv([buffer], self.config.live_recovery_rank_src, 0).wait()  # todo do the wait async
+            buffers.append(buffer)
+            jobs.append(global_pg.recv([buffer], self.config.live_recovery_rank_src, i))
+
+        for job in jobs:
+            job.wait()
+
+        for buffer, param in zip(buffers, self.diloco_offloaded_param_list):
+            data = param.data
+            if isinstance(data, DTensor):
+                data = data.to_local()
             data.copy_(buffer)
 
         outer_opt_state_dict = recv_state_dict(
@@ -564,11 +575,15 @@ class CkptManager:
             self._logger.debug(f"Start sending ckpt to rank {dest_rank}")
 
             try:
-                for param in self.diloco_offloaded_param_list:
+                jobs = []
+                for i, param in enumerate(self.diloco_offloaded_param_list):
                     data = param.data
                     if isinstance(data, DTensor):
                         data = data.to_local()
-                    global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
+                    jobs.append(global_pg.send([data], dest_rank, i))
+
+                for job in jobs:
+                    job.wait()
 
                 send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
                 send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)

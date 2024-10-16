@@ -609,6 +609,7 @@ class CkptManager:
 
         thread = threading.Thread(target=async_send)
         thread.start()
+        self._logger.debug("Live recovery thread started")
 
         self._live_reco_thread = thread
 

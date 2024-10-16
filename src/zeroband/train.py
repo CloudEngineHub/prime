@@ -266,7 +266,7 @@ def train(config: Config):
         diloco.outer_optimizer.step()  # need to step to init the DTensor stats
 
         ## do a forward backward to init the DTensor stats
-        input_ids = torch.zeros(config.train.micro_bs, config.data.seq_length).long().to("cuda")
+        input_ids = torch.zeros(config.train.micro_bs, config.data.seq_length, dtype=torch.long, device="cuda")
         loss = model(tokens=input_ids).contiguous().mean()
         loss.backward()
         inner_optimizer.step()

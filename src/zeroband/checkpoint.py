@@ -253,7 +253,7 @@ class CkptManager:
 
         self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
-        self._async_inner_opt_thread: threading.Thread | None = None
+        self._live_reco_thread: threading.Thread | None = None
 
         if self.world_info.local_rank == 0:
             if self.config.path is not None:
@@ -601,15 +601,16 @@ class CkptManager:
         thread = threading.Thread(target=async_send)
         thread.start()
 
-        self._async_inner_opt_thread = thread
+        self._live_reco_thread = thread
 
     def cache_inner_optimizer(self):
         """
         Cache the inner optimizer to cpu and cast DTensor to local tensor to be ready to send.
         """
-        if self._async_inner_opt_thread is not None:
-            self._async_inner_opt_thread.join()
-            self._async_inner_opt_thread = None
+        if self._live_reco_thread is not None:
+            self._live_reco_thread.join()
+            self._live_reco_thread = None
+            self._logger.debug("Live recovery thread joined")
 
         _inner_optimizer_non_tensor_state_dict, _inner_optimizer_tensors = _get_sendable_state_dict(
             self.optimizer.state_dict()

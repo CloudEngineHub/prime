@@ -337,11 +337,7 @@ def train(config: Config):
                     logger.info(f"live recovery outer model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
                     logger.info(f"inner optimizer hash: {get_optimizer_signature(inner_optimizer)}")
 
-                try:
                     ckpt_manager.send_ckpt_to_peer(elastic_device_mesh.global_pg, maybe_dest_rank)
-                except RuntimeError as e:
-                    # error can happen if the receiver drop off. We don't want to stop the training if this happend.
-                    logger.error(f"Error sending ckpt to rank {maybe_dest_rank}: {e}")
 
                 elastic_device_mesh.live_recovery.reset()
 

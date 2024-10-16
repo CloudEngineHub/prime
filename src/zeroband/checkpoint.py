@@ -563,22 +563,25 @@ class CkptManager:
             time_start = time.perf_counter()
             self._logger.debug(f"Start sending ckpt to rank {dest_rank}")
 
-            for param in self.diloco_offloaded_param_list:
-                data = param.data
-                if isinstance(data, DTensor):
-                    data = data.to_local()
-                global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
+            try:
+                for param in self.diloco_offloaded_param_list:
+                    data = param.data
+                    if isinstance(data, DTensor):
+                        data = data.to_local()
+                    global_pg.send([data], dest_rank, 0).wait()  # todo do the wait async
 
-            send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
-            send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
+                send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
+                send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
 
-            send_tensor_and_state_dict(
-                global_pg, dest_rank, self._inner_optimizer_non_tensor_state_dict, self._inner_optimizer_tensors
-            )
+                send_tensor_and_state_dict(
+                    global_pg, dest_rank, self._inner_optimizer_non_tensor_state_dict, self._inner_optimizer_tensors
+                )
 
-            send_state_dict(global_pg, self.scheduler.state_dict(), dest_rank)
-
-            self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
+                send_state_dict(global_pg, self.scheduler.state_dict(), dest_rank)
+            except RuntimeError as e:
+                self._logger.error(f"Error sending ckpt to rank {dest_rank}: {e}")
+            else:
+                self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
 
         thread = threading.Thread(target=async_send)
         thread.start()

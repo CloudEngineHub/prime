@@ -545,6 +545,7 @@ if __name__ == "__main__":
     # However, in development, we want to know that we broke torch compile
     torch._dynamo.config.suppress_errors = "ZERO_BAND_DEV" not in os.environ
     torch.set_float32_matmul_precision("high")
+    torch.manual_seed(42)
 
     world_info = get_world_info()
     logger = get_logger()

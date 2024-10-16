@@ -218,10 +218,7 @@ def _load_datasets(
         datasets.append(_ds)
         # logger.debug(f"Loaded dataset: {ds_arg}")
 
-    ds = interleave_datasets(
-        datasets=datasets,
-        probabilities=probabilities,
-    )
+    ds = interleave_datasets(datasets=datasets, probabilities=probabilities, stopping_strategy="all_exhausted")
     logger.info(f"Loaded datasets ({split})")
     return ds
 

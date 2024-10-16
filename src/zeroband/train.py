@@ -288,7 +288,7 @@ def train(config: Config):
 
         if config.train.log_model_hash:
             logger.debug("inner diloco model: %s", get_module_signature(model))
-            logger.debug(f"inner diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+            logger.debug(f"outer diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
             logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
 
     if world_info.rank == 0:
@@ -468,17 +468,18 @@ def train(config: Config):
             if world_info.rank == 0 and config.monitor is not None:
                 monitor.set_stage("outer_loop")
 
+            # todo we could skip this is we don't have live recovery enabled
+            ckpt_manager.cache_inner_optimizer()
+
             time_start_inner = time.perf_counter()
             diloco.step(model, flag=training_progress.outer_step)
             diloco_time = time.perf_counter() - time_start_inner
 
             if config.train.log_model_hash:
                 logger.debug("inner diloco model: %s", get_module_signature(model))
-                logger.debug(f"inner diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+                logger.debug(f"outer diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
+                logger.debug(f"outer diloco optimizer hash: {get_optimizer_signature(diloco.outer_optimizer)}")
                 logger.debug(f"outer diloco model hash: {get_tensor_list_signature(diloco.param_list_cpu)}")
-
-            # todo we could skip this is we don't have live recovery enabled
-            ckpt_manager.cache_inner_optimizer()
 
         training_progress.outer_step += 1
 

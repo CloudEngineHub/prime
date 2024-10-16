@@ -132,6 +132,10 @@ def get_module_signature(module: torch.nn.Module, compress: bool = True) -> str:
         return "\n".join(f"{name}: {sig}" for name, sig in state_dict_sig.items())
 
 
+def get_dict_signature(dict: dict, compress: bool = True) -> str:
+    return hashlib.md5(str(dict).encode("utf-8")).hexdigest()
+
+
 def get_optimizer_signature(optimizer: torch.optim.Optimizer, compress: bool = True) -> str:
     """
     Get the optimizer signature
@@ -157,7 +161,8 @@ def get_optimizer_signature(optimizer: torch.optim.Optimizer, compress: bool = T
 
 
 def get_tensor_list_signature(tensor_list: list[torch.Tensor]) -> str:
-    return hashlib.md5(str(tensor_list).encode("utf-8")).hexdigest()
+    tensors = [get_tensor_signature(tensor) for tensor in tensor_list]
+    return hashlib.md5(str(tensors).encode("utf-8")).hexdigest()
 
 
 class GPUMemoryMonitor:

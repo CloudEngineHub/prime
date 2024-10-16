@@ -103,14 +103,19 @@ def send_state_dict(pg: ProcessGroup, state_dict: dict, dest_rank: int) -> None:
 
 
 def send_tensor_and_state_dict(pg: ProcessGroup, dest_rank: int, state_dict: dict, tensors: list[torch.Tensor]) -> None:
+    # logger = get_logger()
+    # logger.debug(f"recv tensors {get_tensor_list_signature(tensors)}")
+
     state_dict_tensor_buffer, size = _object_to_tensor(state_dict)
     pg.send([size], dest_rank, 0).wait()
     pg.send([state_dict_tensor_buffer], dest_rank, 0).wait()
 
-    for tensor in tensors:
+    for i, tensor in enumerate(tensors):
         buffer = tensor
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
+
+        buffer = buffer.cpu()
 
         pg.send([buffer], dest_rank, 0).wait()
 
@@ -128,7 +133,7 @@ def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dic
 
     _, tensors = _get_sendable_state_dict(og_state_dict)
 
-    for tensor in tensors:
+    for i, tensor in enumerate(tensors):
         buffer = tensor
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
@@ -139,5 +144,8 @@ def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dic
         buffer.copy_(data)
 
     state_dict = _load_sendable_state_dict(tensors, state_dict)
+
+    # logger = get_logger()
+    # logger.debug(f"recv tensors {get_tensor_list_signature(tensors)}")
 
     return state_dict

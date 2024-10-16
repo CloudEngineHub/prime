@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 import gc
 import multiprocessing
@@ -252,7 +253,7 @@ class CkptManager:
 
         self.non_blocking_process: list[multiprocessing.Process] = []
         self.blocking_process: list[multiprocessing.Process] = []
-        self.blocking_thread: list[threading.Thread] = []
+        self._async_inner_opt_thread: threading.Thread | None = None
 
         if self.world_info.local_rank == 0:
             if self.config.path is not None:
@@ -408,11 +409,7 @@ class CkptManager:
         for process in self.blocking_process:
             process.join()
 
-        for thread in self.blocking_thread:
-            thread.join()
-
         self.blocking_process = []
-        self.blocking_thread = []
 
         if self.world_info.local_rank == 0:
             if self.config.topk is not None:
@@ -544,6 +541,11 @@ class CkptManager:
         )
         self.optimizer.load_state_dict(inner_opt_state_dict)
 
+        sheduler_state_dict = recv_state_dict(
+            global_pg, self.config.live_recovery_rank_src, self.scheduler.state_dict()
+        )
+        self.scheduler.load_state_dict(sheduler_state_dict)
+
         self._logger.debug(
             f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"
         )
@@ -562,28 +564,33 @@ class CkptManager:
 
             send_state_dict(global_pg, self.diloco_offloaded_optimizer.state_dict(), dest_rank)
             send_state_dict(global_pg, self.training_progress.state_dict(), dest_rank)
+
             send_tensor_and_state_dict(
                 global_pg, dest_rank, self._inner_optimizer_non_tensor_state_dict, self._inner_optimizer_tensors
             )
+
+            send_state_dict(global_pg, self.scheduler.state_dict(), dest_rank)
 
             self._logger.debug(f"Sent ckpt to rank {dest_rank} in {time.perf_counter() - time_start} seconds")
 
         thread = threading.Thread(target=async_send)
         thread.start()
 
-        self.blocking_thread.append(thread)
+        self._async_inner_opt_thread = thread
 
     def cache_inner_optimizer(self):
         """
         Cache the inner optimizer to cpu and cast DTensor to local tensor to be ready to send.
         """
-        self._inner_optimizer_non_tensor_state_dict, tensors = _get_sendable_state_dict(self.optimizer.state_dict())
-        self._inner_optimizer_tensors = []
-        for tensor in tensors:
-            if isinstance(tensor, DTensor):
-                self._inner_optimizer_tensors.append(tensor.to_local().cpu())
-            else:
-                self._inner_optimizer_tensors.append(tensor.cpu())
+        if self._async_inner_opt_thread is not None:
+            self._async_inner_opt_thread.join()
+            self._async_inner_opt_thread = None
+
+        _inner_optimizer_non_tensor_state_dict, _inner_optimizer_tensors = _get_sendable_state_dict(
+            self.optimizer.state_dict()
+        )
+        self._inner_optimizer_tensors = [tensor.cpu() for tensor in _inner_optimizer_tensors]
+        self._inner_optimizer_non_tensor_state_dict = copy.deepcopy(_inner_optimizer_non_tensor_state_dict)
 
 
 def delete_topk(ckpt_path: str, topk: int):

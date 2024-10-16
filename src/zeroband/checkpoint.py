@@ -537,15 +537,20 @@ class CkptManager:
                 data = data.to_local()
             data.copy_(buffer)
 
+        self._logger.debug("live recovery progress: offloaded model received 1/5")
+
         outer_opt_state_dict = recv_state_dict(
             global_pg, self.config.live_recovery_rank_src, self.diloco_offloaded_optimizer.state_dict()
         )
         self.diloco_offloaded_optimizer.load_state_dict(outer_opt_state_dict)
 
+        self._logger.debug("live recovery progress: outer optimizer state dict received 2/5")
+
         training_process_state_dict = recv_state_dict(
             global_pg, self.config.live_recovery_rank_src, self.training_progress.state_dict()
         )
         self.training_progress.load_state_dict(training_process_state_dict)
+        self._logger.debug("live recovery progress: training progress state dict received 3/5")
 
         for group in self.optimizer.param_groups:
             for p in group["params"]:
@@ -559,10 +564,14 @@ class CkptManager:
         )
         self.optimizer.load_state_dict(inner_opt_state_dict)
 
+        self._logger.debug("live recovery progress: inner optimizer state dict received 4/5")
+
         sheduler_state_dict = recv_state_dict(
             global_pg, self.config.live_recovery_rank_src, self.scheduler.state_dict()
         )
         self.scheduler.load_state_dict(sheduler_state_dict)
+
+        self._logger.debug("live recovery progress: scheduler state dict received 5/5")
 
         self._logger.debug(
             f"Received ckpt from rank {self.config.live_recovery_rank_src} in {time.perf_counter() - time_start} seconds"

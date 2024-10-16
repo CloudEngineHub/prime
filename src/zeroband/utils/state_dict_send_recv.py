@@ -139,7 +139,7 @@ def recv_state_dict(pg: ProcessGroup, src_rank: int, og_state_dict: dict) -> dic
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
 
-        data = torch.empty_like(buffer).to("cpu")
+        data = torch.empty_like(buffer, device="cpu")
         pg.recv([data], src_rank, 0).wait()
 
         buffer.copy_(data)

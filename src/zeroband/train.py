@@ -315,8 +315,6 @@ def train(config: Config):
 
     logger.info("starting training")
 
-    diloco.outer_optimizer.step()  # TODO remove. If you are a reviewer and see its still yet block this PR
-
     while True:
         if num_inner_steps > 1:
             # if we don't use diloco we don't print the outer step logs

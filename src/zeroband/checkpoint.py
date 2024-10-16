@@ -617,7 +617,7 @@ class CkptManager:
         """
         Cache the inner optimizer to cpu and cast DTensor to local tensor to be ready to send.
         """
-        self._logger.debug("self._live_reco_thread: ", self._live_reco_thread)
+        self._logger.debug(f"self._live_reco_thread: {self._live_reco_thread}")
 
         if self._live_reco_thread is not None:
             self._logger.debug("Waiting for live recovery thread to finish")

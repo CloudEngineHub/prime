@@ -536,6 +536,13 @@ class CkptManager:
         )
         self.training_progress.load_state_dict(training_process_state_dict)
 
+        for group in self.optimizer.param_groups:
+            for p in group["params"]:
+                p.grad = torch.randn_like(p)
+
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
         inner_opt_state_dict = recv_state_dict(
             global_pg, self.config.live_recovery_rank_src, self.optimizer.state_dict()
         )

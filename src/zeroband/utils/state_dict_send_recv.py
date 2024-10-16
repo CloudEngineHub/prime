@@ -90,8 +90,9 @@ def _load_sendable_state_dict(tensors: list[torch.Tensor], state_dict: dict) -> 
         for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
             if isinstance(value, dict):
                 state_dict_[key] = _load(value)
-            if isinstance(value, str) and value.startswith("zeroband_tensor_"):
+            elif isinstance(value, str) and value.startswith("zeroband_tensor_"):
                 state_dict_[key] = _validate_placeholder_to_tensor(value, tensors)
+
         return state_dict_
 
     return _load(state_dict)
@@ -115,7 +116,7 @@ def send_tensor_and_state_dict(pg: ProcessGroup, dest_rank: int, state_dict: dic
         if isinstance(tensor, DTensor):
             buffer = tensor.to_local()
 
-        buffer = buffer.cpu()
+        buffer = buffer.detach().cpu()
 
         pg.send([buffer], dest_rank, 0).wait()
 

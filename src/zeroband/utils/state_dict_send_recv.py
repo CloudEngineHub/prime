@@ -63,7 +63,7 @@ def _get_sendable_state_dict(state_dict: dict) -> tuple[dict, list[torch.Tensor]
 
     def _split(state_dict_, tensors_):
         new_dict = {}
-        for key, value in list(state_dict_.items()):  # list needed as we modify the state_dict_ as we traverse it
+        for key, value in state_dict_.items():
             if isinstance(value, dict):
                 new_dict[key] = _split(value, tensors_)
             elif isinstance(value, torch.Tensor):

@@ -316,7 +316,10 @@ def train(config: Config):
         time_start_outer = time.perf_counter()
 
         if config.diloco is not None:
+            # this is a patch for now to allow live recovery worker to not affect the all reduce at all
+            num_effective_peers = elastic_device_mesh.global_pg.size()
             elastic_device_mesh.maybe_reinit_global_pg(admit_joiners=True)
+
         # at the beginning of the inner steps we allow joiner to arrive.
         # We maybe reinit before the all reduce but only to allow leaving, not to join anymore
 
@@ -459,7 +462,7 @@ def train(config: Config):
             ckpt_manager.cache_inner_optimizer()
 
             time_start_inner = time.perf_counter()
-            diloco.step(model, flag=training_progress.outer_step)
+            diloco.step(model=model, flag=training_progress.outer_step, num_effective_peers=num_effective_peers)
             diloco_time = time.perf_counter() - time_start_inner
 
             if config.train.log_model_hash:
